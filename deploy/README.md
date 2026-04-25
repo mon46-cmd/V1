@@ -111,7 +111,7 @@ sudo deploy/install.sh
 ```bash
 systemctl status v5-trader.service v5-api.service --no-pager -l
 journalctl -u v5-trader.service -n 50 --no-pager
-curl -s http://127.0.0.1:8765/health | jq .
+curl -s http://127.0.0.1:8765/api/health | jq .
 ```
 
 ## 11. Day-to-day operations

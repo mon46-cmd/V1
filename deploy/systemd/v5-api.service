@@ -21,27 +21,4 @@ NoNewPrivileges=yes
 ProtectSystem=full
 
 [Install]
-WantedBy=default.target[Unit]
-Description=V5 read-only dashboard / API (FastAPI on 127.0.0.1:8765)
-After=network-online.target
-Wants=network-online.target
-StartLimitIntervalSec=600
-StartLimitBurst=5
-
-[Service]
-Type=simple
-# Default install path is ~/v5. See v5-trader.service for how to override.
-WorkingDirectory=%h/v5
-EnvironmentFile=%h/v5/.env
-# Bind to loopback only; expose via reverse proxy / SSH tunnel if needed.
-ExecStart=%h/v5/.venv/bin/python %h/v5/scripts/run_api.py --host 127.0.0.1 --port 8765
-Restart=on-failure
-RestartSec=10
-TimeoutStopSec=15
-StandardOutput=journal
-StandardError=journal
-# --- Hardening (minimal under --user systemd) ---
-NoNewPrivileges=yes
-
-[Install]
 WantedBy=default.target

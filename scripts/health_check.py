@@ -13,9 +13,10 @@ status). The overall exit code follows the worst probe:
 
 Probes:
 
-    services        - all configured systemd --user services are
-                      ``active (running)``. Disabled by default; enable
-                      with ``--services NAME [NAME ...]``.
+    services        - all configured systemd services are ``active
+                      (running)``. Disabled by default; enable with
+                      ``--services NAME [NAME ...]`` and choose the
+                      scope with ``--service-scope user|system``.
     snapshot_age    - the most recent ``snapshot.parquet`` (or
                       ``snapshot.json``) under ``cfg.run_root`` is
                       younger than ``--max-snapshot-min`` minutes
@@ -155,8 +156,8 @@ def _file_age_min(path: Path) -> float:
 # ----------------------------------------------------------------------
 # Probes
 # ----------------------------------------------------------------------
-def probe_services(names: list[str]) -> list[ProbeResult]:
-    """Each service ``--user`` ``ActiveState`` must be ``active``."""
+def probe_services(names: list[str], *, scope: str) -> list[ProbeResult]:
+    """Each configured systemd service ``ActiveState`` must be ``active``."""
     out: list[ProbeResult] = []
     if not names:
         return out
@@ -169,8 +170,12 @@ def probe_services(names: list[str]) -> list[ProbeResult]:
         return out
     for n in names:
         try:
+            cmd = [systemctl]
+            if scope == "user":
+                cmd.append("--user")
+            cmd.extend(["is-active", n])
             r = subprocess.run(
-                [systemctl, "--user", "is-active", n],
+                cmd,
                 capture_output=True, text=True, timeout=5.0, check=False,
             )
             state = (r.stdout or "").strip() or (r.stderr or "").strip()
@@ -319,6 +324,7 @@ def probe_disk(cfg: Config, *, min_free_gb: float) -> ProbeResult:
 def probe_log_errors(
     *,
     services: list[str],
+    scope: str,
     window_min: float,
     max_errors: int,
 ) -> ProbeResult:
@@ -329,8 +335,11 @@ def probe_log_errors(
     if journalctl is None:
         return ProbeResult(name="log_errors", status=STATUS_WARN,
                            detail="journalctl not on PATH")
-    cmd = [journalctl, "--user", "--no-pager", "--since",
-           f"{int(window_min)}min ago", "-p", "err"]
+    cmd = [journalctl]
+    if scope == "user":
+        cmd.append("--user")
+    cmd.extend(["--no-pager", "--since",
+                f"{int(window_min)}min ago", "-p", "err"])
     for n in services:
         cmd.extend(["-u", n])
     try:
@@ -360,7 +369,8 @@ def probe_log_errors(
 def run_probes(args: argparse.Namespace, cfg: Config) -> list[ProbeResult]:
     results: list[ProbeResult] = []
     if args.services:
-        results.extend(probe_services(args.services))
+        results.extend(probe_services(args.services,
+                                      scope=args.service_scope))
     results.append(probe_snapshot_age(
         cfg, max_minutes=args.max_snapshot_min))
     results.append(probe_portfolio_age(
@@ -371,6 +381,7 @@ def run_probes(args: argparse.Namespace, cfg: Config) -> list[ProbeResult]:
     if args.services:
         results.append(probe_log_errors(
             services=args.services,
+            scope=args.service_scope,
             window_min=args.log_window_min,
             max_errors=args.max_log_errors,
         ))
@@ -408,7 +419,10 @@ def render_json(results: list[ProbeResult], overall: str) -> str:
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="V5 paper-orchestrator health check")
     p.add_argument("--services", nargs="*", default=[],
-                   help="systemd --user unit names to verify")
+                   help="systemd unit names to verify")
+    p.add_argument("--service-scope", choices=("user", "system"),
+                   default="user",
+                   help="whether --services refer to user or system units")
     p.add_argument("--api-url", default="",
                    help="dashboard URL (e.g. http://127.0.0.1:8765); "
                         "empty disables the probe")

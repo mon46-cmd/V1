@@ -8,23 +8,8 @@ Type=oneshot
 # For production installs on arbitrary paths, prefer `sudo deploy/install.sh`.
 WorkingDirectory=%h/v5
 EnvironmentFile=%h/v5/.env
-ExecStart=%h/v5/.venv/bin/python %h/v5/scripts/health_check.py --services v5-trader v5-api --api-url http://127.0.0.1:8765 --format text
+ExecStart=%h/v5/.venv/bin/python %h/v5/scripts/health_check.py --service-scope user --services v5-trader v5-api --api-url http://127.0.0.1:8765 --format text
 StandardOutput=journal
 StandardError=journal
 NoNewPrivileges=yes
-ProtectSystem=full[Unit]
-Description=V5 health check (oneshot)
-Wants=v5-health.timer
-
-[Service]
-Type=oneshot
-WorkingDirectory=%h/v5
-EnvironmentFile=%h/v5/.env
-ExecStart=%h/v5/.venv/bin/python %h/v5/scripts/health_check.py \
-    --services v5-trader v5-api \
-    --api-url http://127.0.0.1:8765 \
-    --format text
-# Non-zero is logged but does not retry; the timer drives the cadence.
-StandardOutput=journal
-StandardError=journal
-NoNewPrivileges=yes
+ProtectSystem=full

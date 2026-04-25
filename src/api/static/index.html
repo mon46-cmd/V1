@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>V5 — paper orchestrator</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo">V5</div>
+      <div class="brand-meta">
+        <strong>paper orchestrator</strong>
+        <span id="brand-run" class="dim">—</span>
+      </div>
+    </div>
+    <nav class="nav">
+      <button class="nav-item active" data-view="dashboard"><span class="ico">▦</span>Dashboard</button>
+      <button class="nav-item" data-view="performance"><span class="ico">▤</span>Performance</button>
+      <button class="nav-item" data-view="chart"><span class="ico">◢</span>Chart</button>
+      <button class="nav-item" data-view="positions"><span class="ico">◉</span>Positions</button>
+      <button class="nav-item" data-view="trades"><span class="ico">≡</span>Trades</button>
+      <button class="nav-item" data-view="ai"><span class="ico">✦</span>AI calls</button>
+      <button class="nav-item" data-view="universe"><span class="ico">⌬</span>Universe</button>
+      <button class="nav-item" data-view="live"><span class="ico">●</span>Live</button>
+    </nav>
+    <div class="sidebar-foot">
+      <div class="row">
+        <label class="lbl">run</label>
+        <select id="run-select"></select>
+      </div>
+      <div class="row pills">
+        <span id="health" class="pill pill-warn">connecting</span>
+        <span id="live-status" class="pill pill-warn">live: off</span>
+      </div>
+      <button id="refresh-btn" class="btn-block">↻ refresh</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="kpi-row">
+        <div class="kpi"><div class="kpi-label">equity</div><div class="kpi-value" id="kpi-equity">—</div></div>
+        <div class="kpi"><div class="kpi-label">cash</div><div class="kpi-value" id="kpi-cash">—</div></div>
+        <div class="kpi"><div class="kpi-label">realized 7d</div><div class="kpi-value" id="kpi-realized">—</div></div>
+        <div class="kpi"><div class="kpi-label">win rate 7d</div><div class="kpi-value" id="kpi-winrate">—</div></div>
+        <div class="kpi"><div class="kpi-label">open</div><div class="kpi-value" id="kpi-open">—</div></div>
+        <div class="kpi"><div class="kpi-label">AI cost today</div><div class="kpi-value" id="kpi-budget">—</div></div>
+      </div>
+    </header>
+
+    <section id="view-dashboard" class="view active">
+      <div class="grid grid-2-1">
+        <div class="card">
+          <div class="card-head"><h2>Realized PnL curve</h2>
+            <span class="dim small" id="equity-meta"></span></div>
+          <div class="chart-wrap"><canvas id="chart-equity"></canvas></div>
+        </div>
+        <div class="card">
+          <h2>Risk &amp; portfolio</h2>
+          <dl id="risk-dl" class="dl"></dl>
+        </div>
+      </div>
+      <div class="grid grid-2">
+        <div class="card">
+          <h2>Daily realized PnL (30d)</h2>
+          <div class="chart-wrap"><canvas id="chart-daily"></canvas></div>
+        </div>
+        <div class="card">
+          <h2>Top symbols by realized PnL</h2>
+          <div class="chart-wrap"><canvas id="chart-by-symbol"></canvas></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-performance" class="view">
+      <div class="card">
+        <h2>Per-symbol breakdown</h2>
+        <table id="tbl-perf"><thead><tr>
+          <th>symbol</th><th class="num">entries</th><th class="num">closes</th>
+          <th class="num">winners</th><th class="num">losers</th><th class="num">win rate</th>
+          <th class="num">realized</th><th class="num">fees</th><th class="num">volume</th>
+        </tr></thead><tbody></tbody></table>
+      </div>
+      <div class="grid grid-2">
+        <div class="card">
+          <h2>Daily PnL (30d)</h2>
+          <div class="chart-wrap"><canvas id="chart-daily-perf"></canvas></div>
+        </div>
+        <div class="card">
+          <h2>Outcome mix</h2>
+          <div class="chart-wrap"><canvas id="chart-outcomes"></canvas></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-chart" class="view">
+      <div class="card chart-toolbar">
+        <div class="toolbar-row">
+          <label>symbol
+            <select id="chart-symbol"></select>
+          </label>
+          <label>tf
+            <select id="chart-tf">
+              <option value="1">1m</option>
+              <option value="5">5m</option>
+              <option value="15" selected>15m</option>
+              <option value="60">1h</option>
+              <option value="240">4h</option>
+              <option value="D">1d</option>
+            </select>
+          </label>
+          <label>bars
+            <select id="chart-limit">
+              <option>200</option><option selected>500</option>
+              <option>1000</option><option>2000</option>
+            </select>
+          </label>
+          <button id="chart-reload" class="btn-inline">↻ load</button>
+          <span id="chart-meta" class="dim"></span>
+        </div>
+        <div class="toolbar-row">
+          <span class="toolbar-label">indicators</span>
+          <div id="chart-indicators" class="toggle-row"></div>
+        </div>
+        <div class="toolbar-row">
+          <span class="toolbar-label">flags</span>
+          <div id="chart-flags" class="toggle-row"></div>
+        </div>
+        <div class="toolbar-row">
+          <span class="toolbar-label">events</span>
+          <div id="chart-events" class="toggle-row">
+            <label class="toggle"><input type="checkbox" data-event="trigger" checked />triggers</label>
+            <label class="toggle"><input type="checkbox" data-event="ai_call" checked />AI calls</label>
+            <label class="toggle"><input type="checkbox" data-event="fill" checked />fills</label>
+            <label class="toggle"><input type="checkbox" data-event="review" checked />reviews</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="chart-grid">
+        <div class="card chart-host">
+          <div id="tv-chart" class="tv-chart"></div>
+          <div id="tv-volume" class="tv-volume"></div>
+        </div>
+        <div class="card detail-panel">
+          <h2>Event detail</h2>
+          <div id="event-detail" class="detail-body">
+            <p class="dim">Click a marker on the chart to inspect.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h2>Triggers <span class="dim" id="sym-trig-count"></span></h2>
+          <table id="tbl-sym-triggers"><thead><tr>
+            <th>time</th><th>flag</th><th>decision</th>
+            <th class="num">close</th><th class="num">atr%</th>
+            <th class="num">move%</th><th>reason</th>
+          </tr></thead><tbody></tbody></table>
+        </div>
+        <div class="card">
+          <h2>AI calls <span class="dim" id="sym-ai-count"></span></h2>
+          <table id="tbl-sym-ai"><thead><tr>
+            <th>time</th><th>type</th><th>action</th>
+            <th class="num">conf</th><th class="num">cost</th><th>model</th>
+          </tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-positions" class="view">
+      <div class="card">
+        <h2>Open positions <span class="dim" id="positions-count"></span></h2>
+        <table id="tbl-positions"><thead><tr>
+          <th>symbol</th><th>side</th><th class="num">qty</th>
+          <th class="num">entry</th><th class="num">stop</th>
+          <th class="num">tp1</th><th class="num">tp2</th>
+          <th class="num">R-distance</th><th>opened</th>
+        </tr></thead><tbody></tbody></table>
+      </div>
+      <div class="card">
+        <h2>Watchlist</h2>
+        <div id="watchlist-box" class="watchlist">—</div>
+      </div>
+    </section>
+
+    <section id="view-trades" class="view">
+      <div class="card">
+        <div class="card-head">
+          <h2>Recent fills</h2>
+          <div class="filters">
+            <label>symbol <input id="trade-filter-sym" placeholder="all" /></label>
+            <label>kind
+              <select id="trade-filter-kind">
+                <option value="">all</option>
+                <option>entry</option><option>tp1</option>
+                <option>tp2</option><option>stop</option>
+                <option>time</option><option>manual</option><option>funding</option>
+              </select>
+            </label>
+            <span class="dim" id="trades-count"></span>
+          </div>
+        </div>
+        <table id="tbl-trades"><thead><tr>
+          <th>time</th><th>symbol</th><th>side</th><th>kind</th>
+          <th class="num">price</th><th class="num">qty</th>
+          <th class="num">pnl</th><th class="num">fee</th>
+        </tr></thead><tbody></tbody></table>
+      </div>
+    </section>
+
+    <section id="view-ai" class="view">
+      <div class="grid grid-3">
+        <div class="card kpi-card"><div class="kpi-label">total calls</div>
+          <div class="kpi-value-lg" id="ai-calls">—</div></div>
+        <div class="card kpi-card"><div class="kpi-label">total cost USD</div>
+          <div class="kpi-value-lg" id="ai-cost">—</div></div>
+        <div class="card kpi-card"><div class="kpi-label">tokens (in / out)</div>
+          <div class="kpi-value-lg" id="ai-tokens">—</div></div>
+      </div>
+      <div class="grid grid-2">
+        <div class="card">
+          <h2>Calls per day (by type)</h2>
+          <div class="chart-wrap"><canvas id="chart-ai-daily"></canvas></div>
+        </div>
+        <div class="card">
+          <h2>Cost &amp; volume by call type</h2>
+          <div class="chart-wrap"><canvas id="chart-ai-bytype"></canvas></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <h2>Prompt history</h2>
+          <div class="filters">
+            <label>type
+              <select id="prompt-filter-type">
+                <option value="">all</option>
+                <option>watchlist</option>
+                <option>trigger</option>
+                <option>review</option>
+              </select>
+            </label>
+            <label>limit
+              <select id="prompt-filter-limit">
+                <option>50</option><option selected>100</option>
+                <option>250</option><option>500</option>
+              </select>
+            </label>
+            <span class="dim" id="prompts-count"></span>
+          </div>
+        </div>
+        <table id="tbl-prompts"><thead><tr>
+          <th>time</th><th>type</th><th>symbol</th><th>model</th>
+          <th class="num">tokens</th><th class="num">cost</th>
+          <th>action</th><th class="num">conf</th><th>summary</th>
+        </tr></thead><tbody></tbody></table>
+      </div>
+    </section>
+
+    <section id="view-universe" class="view">
+      <div class="card">
+        <h2>Universe <span class="dim" id="universe-count"></span></h2>
+        <div id="universe-box"></div>
+      </div>
+    </section>
+
+    <section id="view-live" class="view">
+      <div class="card">
+        <div class="card-head">
+          <h2>Live event tail</h2>
+          <span class="dim small">SSE · triggers · intents · fills · reviews</span>
+        </div>
+        <div id="live-stats" class="live-stats"></div>
+        <pre id="live-log"></pre>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

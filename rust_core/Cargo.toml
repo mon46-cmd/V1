@@ -1,0 +1,16 @@
+[package]
+name = "des_core"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "des_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module", "abi3-py312"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

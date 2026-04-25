@@ -1,0 +1,13 @@
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "des_core"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+description = "Hot kernels for the V5 feature engine."
+
+[tool.maturin]
+module-name = "des_core"
+features = ["pyo3/extension-module"]

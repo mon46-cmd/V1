@@ -1,0 +1,26 @@
+# V5 logrotate drop-in.
+#
+# Install as ``/etc/logrotate.d/v5`` (root, 0644) OR for an unprivileged
+# deployment under ``--user`` systemd, run via a user cron job:
+#
+#     */60 * * * * /usr/sbin/logrotate -s $HOME/.cache/v5-logrotate.state $HOME/v5/deploy/logrotate.v5
+#
+# Edit the absolute path below to match your install. The pattern is
+# wildcard so per-process logs (snapshot.log, scanner.log, exec.log,
+# api.log, ...) are all covered. JSONL audit files are intentionally
+# NOT rotated here - they are append-only history and only grow on
+# fills/intents/triggers/reviews/prompts (small).
+
+/home/v5/v5/data/logs/*.log {
+    hourly
+    rotate 168
+    size 50M
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    nocreate
+    dateext
+    dateformat -%Y%m%d-%H
+}

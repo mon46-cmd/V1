@@ -1,0 +1,43 @@
+[Unit]
+Description=V5 read-only dashboard / API (FastAPI on 127.0.0.1:8765)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=%h/v5
+EnvironmentFile=%h/v5/.env
+# Bind to loopback only; expose via reverse proxy / SSH tunnel if needed.
+ExecStart=%h/v5/.venv/bin/python %h/v5/scripts/run_api.py --host 127.0.0.1 --port 8765
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=15
+StandardOutput=journal
+StandardError=journal
+# --- Hardening ---
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+# Read-only data tree is enough; the API never writes there.
+ReadOnlyPaths=%h/v5/data
+ReadWritePaths=%h/v5/.venv
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+LimitNOFILE=2048
+MemoryMax=512M
+
+[Install]
+WantedBy=default.target

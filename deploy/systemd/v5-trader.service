@@ -1,0 +1,44 @@
+[Unit]
+Description=V5 paper-orchestrator (scanner + exec loop)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=%h/v5
+EnvironmentFile=%h/v5/.env
+# Loopback-only by default; rely on the venv's Python and our launcher.
+ExecStart=%h/v5/.venv/bin/python %h/v5/scripts/run_exec.py
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+# stdout/stderr go to journald; we still write structured JSON logs to
+# data/logs/ for replay and grep.
+StandardOutput=journal
+StandardError=journal
+# --- Hardening (works under --user systemd) ---
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/v5/data %h/v5/.venv
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+# Resource caps - tune if you load more symbols.
+LimitNOFILE=4096
+MemoryMax=2G
+
+[Install]
+WantedBy=default.target

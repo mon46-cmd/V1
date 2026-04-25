@@ -1,17 +1,23 @@
-# V5 logrotate drop-in.
+# V5 logrotate config.
 #
-# Install as ``/etc/logrotate.d/v5`` (root, 0644) OR for an unprivileged
-# deployment under ``--user`` systemd, run via a user cron job:
+# This file uses a placeholder __V5_HOME__ that deploy/install.sh does
+# NOT auto-rewrite (logrotate paths must be absolute and rooted, so we
+# keep this manual to make the path visible to the operator).
 #
-#     */60 * * * * /usr/sbin/logrotate -s $HOME/.cache/v5-logrotate.state $HOME/v5/deploy/logrotate.v5
+# Install (system-wide, recommended):
+#     sudo sed "s|__V5_HOME__|$HOME/V1|g" deploy/logrotate.v5 \
+#         | sudo tee /etc/logrotate.d/v5 > /dev/null
+#     sudo logrotate -d /etc/logrotate.d/v5    # dry-run
 #
-# Edit the absolute path below to match your install. The pattern is
-# wildcard so per-process logs (snapshot.log, scanner.log, exec.log,
-# api.log, ...) are all covered. JSONL audit files are intentionally
-# NOT rotated here - they are append-only history and only grow on
-# fills/intents/triggers/reviews/prompts (small).
+# Or for unprivileged user (no sudo):
+#     sed "s|__V5_HOME__|$HOME/V1|g" deploy/logrotate.v5 > ~/.config/v5-logrotate
+#     # then add to crontab -e:
+#     */60 * * * * /usr/sbin/logrotate -s ~/.cache/v5-logrotate.state ~/.config/v5-logrotate
+#
+# JSONL audit files (triggers/intents/fills/reviews/prompts) are
+# intentionally NOT rotated - they are append-only history.
 
-/home/v5/v5/data/logs/*.log {
+__V5_HOME__/data/logs/*.log __V5_HOME__/data/logs/*.out {
     hourly
     rotate 168
     size 50M

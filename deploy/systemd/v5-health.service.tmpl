@@ -1,0 +1,14 @@
+[Unit]
+Description=V5 health check (oneshot)
+Wants=v5-health.timer
+
+[Service]
+Type=oneshot
+User=__USER__
+Group=__GROUP__
+WorkingDirectory=__V5_HOME__
+EnvironmentFile=__V5_HOME__/.env
+ExecStart=__V5_HOME__/.venv/bin/python __V5_HOME__/scripts/health_check.py --services v5-trader v5-api --api-url http://127.0.0.1:8765 --format text
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=yes

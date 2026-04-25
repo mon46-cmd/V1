@@ -114,6 +114,15 @@ journalctl -u v5-trader.service -n 50 --no-pager
 curl -s http://127.0.0.1:8765/api/health | jq .
 ```
 
+The health probe has three outcomes by design:
+
+- exit `0`: PASS
+- exit `1`: WARN
+- exit `2`: FAIL
+
+The shipped systemd health unit treats `1` as successful so a non-fatal warn
+does not mark `v5-health.service` as failed.
+
 ## 11. Day-to-day operations
 
 ### Restart the trader and API

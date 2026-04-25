@@ -9,6 +9,7 @@ Type=oneshot
 WorkingDirectory=%h/v5
 EnvironmentFile=%h/v5/.env
 ExecStart=%h/v5/.venv/bin/python %h/v5/scripts/health_check.py --service-scope user --services v5-trader v5-api --api-url http://127.0.0.1:8765 --format text
+SuccessExitStatus=1
 StandardOutput=journal
 StandardError=journal
 NoNewPrivileges=yes

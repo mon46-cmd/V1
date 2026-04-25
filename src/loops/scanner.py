@@ -32,6 +32,7 @@ from ai import AIClient, WatchlistResponse
 from core.config import Config
 from core.ids import run_id as _new_run_id
 from core.paths import run_dir
+from core.time import now_utc
 from downloader.http import HttpClient
 from downloader.rest import RestClient
 from downloader.universe import build_universe, save_universe
@@ -75,6 +76,52 @@ def _append_jsonl(path: Path, record: dict) -> None:
         f.write(line + "\n")
 
 
+def _file_age_sec(path: Path) -> float:
+    """Seconds since ``path`` was last modified (>= 0). 0 if path missing."""
+    try:
+        st = path.stat()
+    except OSError:
+        return 0.0
+    import time as _time
+    return max(0.0, _time.time() - float(st.st_mtime))
+
+
+def _find_recent_watchlist(
+    run_root: Path,
+    *,
+    max_age_sec: float,
+    preferred: Path | None = None,
+) -> Path | None:
+    """Return the freshest ``watchlist.json`` under ``run_root`` whose
+    mtime is within ``max_age_sec``. If ``preferred`` exists and is
+    fresh enough, return it directly without scanning peers.
+    """
+    if max_age_sec <= 0:
+        return None
+    if preferred is not None and preferred.exists():
+        if _file_age_sec(preferred) <= max_age_sec:
+            return preferred
+    if not run_root.exists():
+        return None
+    best: tuple[float, Path] | None = None
+    try:
+        candidates = list(run_root.glob("*/watchlist.json"))
+    except OSError:
+        return None
+    for p in candidates:
+        try:
+            mtime = p.stat().st_mtime
+        except OSError:
+            continue
+        if best is None or mtime > best[0]:
+            best = (mtime, p)
+    if best is None:
+        return None
+    if _file_age_sec(best[1]) > max_age_sec:
+        return None
+    return best[1]
+
+
 def _decision_to_record(d: TriggerDecision) -> dict:
     return {
         "symbol": d.symbol,
@@ -105,6 +152,12 @@ class Scanner:
     ai: AIClient
     deep_callback: DeepCallback | None = None
     run_id: str | None = None
+    # Cost-regression guard: if a prior watchlist.json exists in the run
+    # dir and is fresher than this many seconds, reuse it instead of
+    # firing chat_watchlist (a multi-agent grok call costs real USD).
+    # Default = half the cadence so steady-state restarts within the
+    # same 30-min window cannot double-bill.
+    watchlist_reuse_sec: float | None = None
 
     _store: CooldownStore | None = None
 
@@ -126,6 +179,28 @@ class Scanner:
             "triggers_jsonl": d / "triggers.jsonl",
             "cooldowns_json": d / "cooldowns.json",
         }
+
+    def _effective_reuse_sec(self) -> float:
+        """Resolve the watchlist-reuse cap.
+
+        Precedence: explicit ``self.watchlist_reuse_sec`` > env
+        ``SCANNER_WATCHLIST_REUSE_SEC`` > 900 (15 min, half the default
+        30-min cadence). Set to 0 (or a negative value) to disable
+        reuse entirely. Values are clamped to [0, 86400] (24h) so a
+        typo cannot freeze the watchlist for days.
+        """
+        raw: float
+        if self.watchlist_reuse_sec is not None:
+            raw = float(self.watchlist_reuse_sec)
+        else:
+            env = os.getenv("SCANNER_WATCHLIST_REUSE_SEC", "").strip()
+            try:
+                raw = float(env) if env else 900.0
+            except ValueError:
+                raw = 900.0
+        if raw < 0.0:
+            return 0.0
+        return min(raw, 86_400.0)
 
     async def run_once(self) -> ScannerResult:
         rid = self._ensure_run()
@@ -152,13 +227,42 @@ class Scanner:
         log.info("scanner.run_once snapshot built=%d failed=%d",
                  snap_report.n_built, snap_report.n_failed)
 
-        # 3. Watchlist (LLM A).
-        as_of = pd.Timestamp.utcnow().tz_localize(None).tz_localize("UTC").isoformat()
-        wl: WatchlistResponse = await self.ai.chat_watchlist(snap_df, as_of=as_of)
+        # 3. Watchlist (LLM A) -- reuse a fresh prior result if we can,
+        # so a service restart inside the same scanner cadence does not
+        # re-bill chat_watchlist (the most expensive call in the system).
+        # We look in the current run dir AND across all run dirs because
+        # run_exec.py allocates a new run_id on every restart.
         wl_path = paths["watchlist_json"]
-        wl_path.parent.mkdir(parents=True, exist_ok=True)
-        wl_path.write_text(wl.model_dump_json(indent=2), encoding="utf-8")
-        watch_symbols = [s.symbol for s in wl.shortlist]
+        wl: WatchlistResponse | None = None
+        reuse_sec = self._effective_reuse_sec()
+        if reuse_sec > 0:
+            recent = _find_recent_watchlist(self.cfg.run_root, max_age_sec=reuse_sec,
+                                            preferred=wl_path)
+            if recent is not None:
+                try:
+                    wl = WatchlistResponse.model_validate_json(
+                        recent.read_text(encoding="utf-8")
+                    )
+                    log.info(
+                        "scanner.run_once reusing watchlist age=%.0fs cap=%.0fs path=%s",
+                        _file_age_sec(recent), reuse_sec, recent,
+                    )
+                    # Mirror the reused payload into the current run dir
+                    # so the dashboard / downstream tools find it.
+                    if recent != wl_path:
+                        wl_path.parent.mkdir(parents=True, exist_ok=True)
+                        wl_path.write_text(wl.model_dump_json(indent=2),
+                                           encoding="utf-8")
+                except Exception:  # noqa: BLE001
+                    log.warning("scanner.run_once watchlist reuse failed; refetching",
+                                exc_info=True)
+                    wl = None
+        if wl is None:
+            as_of = pd.Timestamp.now(tz="UTC").isoformat()
+            wl = await self.ai.chat_watchlist(snap_df, as_of=as_of)
+            wl_path.parent.mkdir(parents=True, exist_ok=True)
+            wl_path.write_text(wl.model_dump_json(indent=2), encoding="utf-8")
+        watch_symbols = [s.symbol for s in wl.selections]
         log.info("scanner.run_once watchlist n=%d", len(watch_symbols))
 
         # 4. Trigger gate per shortlisted symbol.
@@ -197,7 +301,16 @@ class Scanner:
         )
 
     async def run_forever(self, interval_sec: int = 1800) -> None:
-        """Loop ``run_once`` every ``interval_sec`` (default 30 min)."""
+        """Loop ``run_once`` every ``interval_sec`` (default 30 min).
+
+        If ``watchlist_reuse_sec`` is unset, default it to half the
+        cadence so a service restart inside the same scan window does
+        not re-bill ``chat_watchlist``.
+        """
+        if self.watchlist_reuse_sec is None and not os.getenv(
+            "SCANNER_WATCHLIST_REUSE_SEC", ""
+        ).strip():
+            self.watchlist_reuse_sec = max(60.0, float(interval_sec) / 2.0)
         while True:
             try:
                 await self.run_once()

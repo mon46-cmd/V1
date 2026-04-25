@@ -224,6 +224,34 @@ def test_watchlist(client: TestClient, run_tree) -> None:
     assert r.json()["symbols"] == ["BTCUSDT", "SOLUSDT"]
 
 
+def test_watchlist_normalises_canonical_selections_schema(
+    client: TestClient, run_tree, tmp_path: Path,
+) -> None:
+    """A watchlist.json written by ``WatchlistResponse.model_dump_json``
+    has ``selections``, not ``symbols``. The endpoint must surface
+    ``symbols`` regardless so the dashboard chips render."""
+    rdir, rid = run_tree
+    _write_json(rdir / "watchlist.json", {
+        "prompt_version": "v0.0.1",
+        "as_of": "2026-04-25T10:00:00+00:00",
+        "market_regime": "chop",
+        "selections": [
+            {"symbol": "AAAUSDT", "side": "long",
+             "expected_move_pct": 2.5, "confidence": 0.7,
+             "thesis": "demo"},
+            {"symbol": "BBBUSDT", "side": "short",
+             "expected_move_pct": -1.2, "confidence": 0.6,
+             "thesis": "demo"},
+        ],
+    })
+    body = client.get(f"/api/runs/{rid}/watchlist").json()
+    assert body["symbols"] == ["AAAUSDT", "BBBUSDT"]
+    # /api/symbols must also pick them up.
+    rows = client.get(f"/api/symbols?run_id={rid}").json()["rows"]
+    syms = {r["symbol"] for r in rows}
+    assert {"AAAUSDT", "BBBUSDT"}.issubset(syms)
+
+
 def test_prompts_sanitised(client: TestClient, run_tree) -> None:
     _, rid = run_tree
     r = client.get(f"/api/runs/{rid}/prompts")

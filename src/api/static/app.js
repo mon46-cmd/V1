@@ -59,41 +59,150 @@ Chart.defaults.font.size = 11;
 Chart.defaults.animation = false;
 
 /* ---------- fetch helpers ---------- */
-async function fetchJSON(url) {
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(`${url} -> ${r.status}`);
-  return r.json();
+async function fetchJSON(url, { silent = false } = {}) {
+  let r;
+  try {
+    r = await fetch(url);
+  } catch (e) {
+    if (!silent) toast("network error", `${url}\n${e.message}`, "error");
+    throw e;
+  }
+  if (!r.ok) {
+    let body = "";
+    try { body = (await r.text()).slice(0, 200); } catch {}
+    if (!silent) toast(`${r.status} ${r.statusText}`, `${url}\n${body}`, "error");
+    throw new Error(`${url} -> ${r.status}`);
+  }
+  try {
+    return await r.json();
+  } catch (e) {
+    if (!silent) toast("bad JSON", `${url}\n${e.message}`, "error");
+    throw e;
+  }
 }
 const q = (id) => document.getElementById(id);
+
+/* ---------- toast notifications ---------- */
+function toast(title, body, kind = "info", ttl = 5000) {
+  const host = q("toast-host");
+  if (!host) return;
+  const el = document.createElement("div");
+  el.className = `toast toast-${kind}`;
+  el.innerHTML =
+    `<div class="toast-title">${escapeHtml(title)}</div>` +
+    (body ? `<div class="toast-body">${escapeHtml(body)}</div>` : "");
+  el.addEventListener("click", () => dismiss());
+  host.appendChild(el);
+  const t = setTimeout(dismiss, ttl);
+  function dismiss() {
+    clearTimeout(t);
+    el.classList.add("dismiss");
+    setTimeout(() => el.remove(), 200);
+  }
+}
+
+/* ---------- last-updated indicator ---------- */
+let lastUpdatedAt = 0;
+function markUpdated() {
+  lastUpdatedAt = Date.now();
+  renderLastUpdated();
+}
+function renderLastUpdated() {
+  const el = q("last-updated");
+  if (!el) return;
+  if (!lastUpdatedAt) { el.textContent = "never updated"; return; }
+  const sec = Math.round((Date.now() - lastUpdatedAt) / 1000);
+  let s;
+  if (sec < 5) s = "updated just now";
+  else if (sec < 60) s = `updated ${sec}s ago`;
+  else if (sec < 3600) s = `updated ${Math.round(sec / 60)}m ago`;
+  else s = `updated ${Math.round(sec / 3600)}h ago`;
+  el.textContent = s;
+}
+setInterval(renderLastUpdated, 5000);
 
 /* ============================================================
    Init
    ============================================================ */
 window.addEventListener("DOMContentLoaded", async () => {
   setupNav();
+  setupSidebarToggle();
+  setupKeyboardShortcuts();
+  setupSortableTables();
+  setupSymbolSearch();
+  initChartView();
   q("refresh-btn").addEventListener("click", refreshAll);
   q("run-select").addEventListener("change", (e) => switchRun(e.target.value));
   q("trade-filter-sym").addEventListener("input", renderTrades);
   q("trade-filter-kind").addEventListener("change", renderTrades);
   q("prompt-filter-type").addEventListener("change", () => loadPrompts().then(renderPrompts));
   q("prompt-filter-limit").addEventListener("change", () => loadPrompts().then(renderPrompts));
+  document.addEventListener("visibilitychange", onVisibilityChange);
   await refreshAll();
-  setInterval(refreshLight, 15000);
+  schedulePolling();
 });
+
+/* ----- visibility-aware polling: pause when tab hidden ----- */
+let pollTimer = null;
+function schedulePolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  if (document.visibilityState === "hidden") return;
+  pollTimer = setInterval(refreshLight, 15000);
+}
+function onVisibilityChange() {
+  if (document.visibilityState === "visible") {
+    refreshLight().catch(() => {});
+    schedulePolling();
+    ensureLiveStream();
+  } else {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  }
+}
 
 function setupNav() {
   document.querySelectorAll(".nav-item").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      document.querySelectorAll(".nav-item").forEach((b) => b.classList.remove("active"));
-      document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
-      btn.classList.add("active");
-      q(`view-${btn.dataset.view}`).classList.add("active");
-      // resize charts that became visible
-      requestAnimationFrame(() => {
-        Object.values(charts).forEach((c) => c && c.resize && c.resize());
-      });
-      if (btn.dataset.view === "live") ensureLiveStream();
-    });
+    btn.addEventListener("click", () => activateView(btn.dataset.view));
+  });
+}
+function activateView(view) {
+  if (!view) return;
+  document.querySelectorAll(".nav-item").forEach((b) =>
+    b.classList.toggle("active", b.dataset.view === view));
+  document.querySelectorAll(".view").forEach((v) =>
+    v.classList.toggle("active", v.id === `view-${view}`));
+  // resize charts that became visible
+  requestAnimationFrame(() => {
+    Object.values(charts).forEach((c) => c && c.resize && c.resize());
+    if (chartState.chart && view === "chart") {
+      const w = q("tv-chart").clientWidth;
+      chartState.chart.applyOptions({ width: w });
+      chartState.volumeChart.applyOptions({ width: w });
+    }
+  });
+  if (view === "chart" && chartState.current && !chartState.data) loadChart();
+  // close sidebar on mobile after picking a view
+  q("sidebar")?.classList.remove("open");
+}
+
+function setupSidebarToggle() {
+  q("sidebar-toggle")?.addEventListener("click", () => {
+    q("sidebar")?.classList.toggle("open");
+  });
+}
+
+function setupKeyboardShortcuts() {
+  document.addEventListener("keydown", (ev) => {
+    // Skip when typing in inputs.
+    const t = ev.target;
+    if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" ||
+              t.tagName === "TEXTAREA" || t.isContentEditable)) {
+      return;
+    }
+    if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+    const map = document.querySelector(`.nav-item[data-key="${ev.key}"]`);
+    if (map) { activateView(map.dataset.view); ev.preventDefault(); return; }
+    if (ev.key === "r" || ev.key === "R") { refreshAll(); ev.preventDefault(); }
+    if (ev.key === "/") { q("trade-filter-sym")?.focus(); ev.preventDefault(); }
   });
 }
 
@@ -102,25 +211,46 @@ function setupNav() {
    ============================================================ */
 async function refreshAll() {
   try {
-    const health = await fetchJSON("/api/health");
+    const health = await fetchJSON("/api/health", { silent: true });
     setHealth(health);
-    const runs = await fetchJSON("/api/runs");
+    const runs = await fetchJSON("/api/runs", { silent: true });
     state.runs = runs.runs || [];
     if (!state.activeRun) state.activeRun = runs.active;
     populateRunSelect();
-    if (!state.activeRun) return;
-    await Promise.all([
+    renderRunState();
+    if (!state.activeRun) {
+      renderEmptyOverall();
+      return;
+    }
+    const results = await Promise.allSettled([
       loadMetrics(), loadPortfolio(), loadEquity(),
       loadFills(), loadPrompts(), loadPerfSymbol(),
       loadPerfDay(), loadAIUsage(),
       loadUniverse(), loadWatchlist(), loadPositions(),
       loadSymbols(),
     ]);
+    const failed = results.filter((r) => r.status === "rejected");
+    if (failed.length) {
+      toast(`${failed.length} endpoint(s) failed`,
+        failed.slice(0, 3).map((r) => String(r.reason).slice(0, 80)).join("\n"),
+        "warn");
+    }
     renderAll();
+    markUpdated();
+    ensureLiveStream();
   } catch (e) {
     console.error(e);
     setHealth({ status: "error" });
   }
+}
+
+function renderEmptyOverall() {
+  // Show empty cards rather than leaving stale numbers when no runs exist.
+  ["kpi-equity","kpi-cash","kpi-realized","kpi-winrate","kpi-open","kpi-budget"]
+    .forEach((id) => setText(id, "—"));
+  const dl = q("risk-dl"); if (dl) dl.innerHTML =
+    `<div class="empty-state"><strong>no runs found</strong>
+     start the scanner via <code>scripts/run_exec.py</code></div>`;
 }
 
 async function refreshLight() {
@@ -130,6 +260,8 @@ async function refreshLight() {
     renderTopKpis();
     renderRiskDl();
     renderPositions();
+    renderRunState();
+    markUpdated();
   } catch (e) { console.warn(e); }
 }
 
@@ -187,6 +319,7 @@ function renderAll() {
   renderAIByTypeChart();
   renderUniverse();
   renderWatchlist();
+  reapplySorts();
 }
 
 function setHealth(h) {
@@ -198,6 +331,23 @@ function setHealth(h) {
   } else {
     el.className = "pill pill-bad";
     el.textContent = "offline";
+  }
+}
+function renderRunState() {
+  const el = q("run-state");
+  if (!el) return;
+  const r = state.runs.find((x) => x.run_id === state.activeRun);
+  if (!r || !r.mtime) { el.textContent = ""; el.className = "pill"; return; }
+  const ageMin = Math.round((Date.now() / 1000 - r.mtime) / 60);
+  if (ageMin < 5) {
+    el.className = "pill pill-fresh";
+    el.textContent = `fresh ${ageMin}m`;
+  } else if (ageMin < 60) {
+    el.className = "pill pill-stale";
+    el.textContent = `stale ${ageMin}m`;
+  } else {
+    el.className = "pill pill-stale";
+    el.textContent = `stale ${Math.round(ageMin / 60)}h`;
   }
 }
 function populateRunSelect() {
@@ -258,7 +408,9 @@ function renderEquityChart() {
   const ctx = q("chart-equity");
   if (!ctx) return;
   const pts = state.equity || [];
-  q("equity-meta").textContent = `${pts.length} fills`;
+  q("equity-meta").textContent = pts.length
+    ? `${pts.length} closes · ${fmtUsd(pts[pts.length - 1].realized_usd)}`
+    : "no closed trades yet";
   if (pts.length < 1) return;
   const data = pts.map((p) => ({ x: p.ts, y: p.realized_usd }));
   const lastY = pts.length ? pts[pts.length - 1].realized_usd : 0;
@@ -367,7 +519,14 @@ function renderOutcomesChart() {
 function renderPerfTable() {
   const tbody = document.querySelector("#tbl-perf tbody");
   tbody.innerHTML = "";
-  for (const r of state.perfBySymbol || []) {
+  const rows = state.perfBySymbol || [];
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="9"><div class="empty-state">
+      <strong>no closed trades yet</strong>
+      per-symbol stats appear once positions close.</div></td></tr>`;
+    return;
+  }
+  for (const r of rows) {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td><strong>${escapeHtml(r.symbol)}</strong></td>
@@ -389,6 +548,12 @@ function renderPositions() {
   tbody.innerHTML = "";
   const rows = state.positions || [];
   q("positions-count").textContent = rows.length ? `(${rows.length})` : "";
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="9"><div class="empty-state">
+      <strong>no open positions</strong>
+      the trader will fill this once a trigger passes the gate.</div></td></tr>`;
+    return;
+  }
   for (const p of rows) {
     const sideCls = p.side === "long" ? "pill-side-long" : "pill-side-short";
     const dist = (p.entry_price && p.stop_loss)
@@ -419,6 +584,12 @@ function renderTrades() {
   if (symF) rows = rows.filter((r) => (r.symbol || "").toUpperCase().includes(symF));
   if (kindF) rows = rows.filter((r) => r.kind === kindF);
   q("trades-count").textContent = `${rows.length} rows`;
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="8"><div class="empty-state">
+      <strong>no fills match the filters</strong>
+      clear the filters or wait for the next entry.</div></td></tr>`;
+    return;
+  }
   for (const f of rows) {
     const pnl = Number(f.pnl_usd ?? 0);
     const pnlCls = pnl > 0 ? "num-pos" : pnl < 0 ? "num-neg" : "";
@@ -651,12 +822,19 @@ function renderUniverse() {
   box.innerHTML = "";
   const rows = Array.isArray(state.universe) ? state.universe : [];
   q("universe-count").textContent = rows.length ? `(${rows.length})` : "";
+  if (!rows.length) {
+    box.innerHTML = `<div class="empty-state"><strong>no universe yet</strong>
+      the scanner builds the universe on its first cycle.</div>`;
+    return;
+  }
   for (const r of rows) {
     const chip = document.createElement("button");
     chip.type = "button";
     chip.className = "chip chip-action";
     const score = r.score != null ? Number(r.score).toFixed(2) : "";
-    chip.innerHTML = `<strong>${escapeHtml(r.symbol || "?")}</strong>${score}`;
+    chip.innerHTML = `<strong>${escapeHtml(r.symbol || "?")}</strong>` +
+      (score ? `<span class="chip-meta">${score}</span>` : "");
+    chip.title = JSON.stringify(r, null, 2);
     chip.addEventListener("click", () => { void selectChartSymbol(r.symbol, { openView: true }); });
     box.appendChild(chip);
   }
@@ -666,9 +844,47 @@ function renderWatchlist() {
   const box = q("watchlist-box");
   box.innerHTML = "";
   const wl = state.watchlist || {};
-  const syms = wl.symbols || [];
-  if (!syms.length) { box.textContent = "no watchlist"; return; }
-  for (const s of syms) {
+  // Prefer the canonical schema selections (rich data); fall back to
+  // the flat symbols array when the payload doesn't carry selections.
+  const sels = Array.isArray(wl.selections) ? wl.selections : [];
+  const symbols = Array.isArray(wl.symbols) ? wl.symbols : [];
+  if (!sels.length && !symbols.length) {
+    box.innerHTML = `<div class="empty-state"><strong>no watchlist</strong>
+      run the watchlist step to populate symbols.</div>`;
+    return;
+  }
+  if (sels.length) {
+    if (wl.market_regime) {
+      const meta = document.createElement("div");
+      meta.className = "dim small";
+      meta.style.flexBasis = "100%";
+      meta.style.marginBottom = "6px";
+      meta.textContent = `regime: ${wl.market_regime}` +
+        (wl.as_of ? ` · as of ${fmtTs(wl.as_of)}` : "");
+      box.appendChild(meta);
+    }
+    for (const s of sels) {
+      const sym = s.symbol || "";
+      const side = s.side || "";
+      const conf = s.confidence != null
+        ? `${Math.round(s.confidence * 100)}%` : "";
+      const move = s.expected_move_pct != null
+        ? `${Number(s.expected_move_pct).toFixed(1)}%` : "";
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "chip chip-action" +
+        (side === "long" ? " chip-long" : side === "short" ? " chip-short" : "");
+      chip.innerHTML = `<strong>${escapeHtml(sym)}</strong>` +
+        (side ? `<span class="chip-meta">${escapeHtml(side)}</span>` : "") +
+        (conf ? `<span class="chip-meta">${conf}</span>` : "") +
+        (move ? `<span class="chip-meta">Δ${move}</span>` : "");
+      if (s.thesis) chip.title = s.thesis;
+      chip.addEventListener("click", () => { void selectChartSymbol(sym, { openView: true }); });
+      box.appendChild(chip);
+    }
+    return;
+  }
+  for (const s of symbols) {
     const chip = document.createElement("button");
     chip.type = "button";
     chip.className = "chip chip-action";
@@ -679,19 +895,38 @@ function renderWatchlist() {
 }
 
 /* ============================================================
-   Live SSE
+   Live SSE — auto-connect on boot, with exponential backoff.
    ============================================================ */
+let sseRetryMs = 1000;
+let sseRetryTimer = null;
 function ensureLiveStream() {
   if (state.sse || !state.activeRun) return;
+  if (document.visibilityState === "hidden") return;
   const url = `/api/live?run_id=${rid()}`;
-  const es = new EventSource(url);
+  let es;
+  try {
+    es = new EventSource(url);
+  } catch (e) {
+    setLiveStatus(false);
+    return;
+  }
   state.sse = es;
   setLiveStatus(true);
+  es.addEventListener("open", () => { sseRetryMs = 1000; });
   for (const k of ["hello", "trigger", "intent", "fill", "review",
                    "triggers", "intents", "fills", "reviews"]) {
     es.addEventListener(k, (ev) => pushLive(k, ev.data));
   }
-  es.onerror = () => setLiveStatus(false);
+  es.onerror = () => {
+    setLiveStatus(false);
+    try { es.close(); } catch {}
+    state.sse = null;
+    if (sseRetryTimer) clearTimeout(sseRetryTimer);
+    sseRetryTimer = setTimeout(() => {
+      sseRetryMs = Math.min(sseRetryMs * 2, 30000);
+      ensureLiveStream();
+    }, sseRetryMs);
+  };
 }
 function pushLive(kind, data) {
   const k = kind.replace(/s$/, "");
@@ -754,6 +989,11 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
   })[c]);
+}
+function tfSeconds(tf) {
+  if (tf === "D") return 86400;
+  const n = parseInt(tf, 10);
+  return Number.isFinite(n) && n > 0 ? n * 60 : 60;
 }
 
 /* ============================================================
@@ -1114,9 +1354,13 @@ function applyMarkers() {
 
 function onChartClick(param) {
   if (!param || !param.time || !chartState._markers) return;
-  // Find markers at this time (closest match within bar interval).
+  // Tolerance = half a bar interval, so clicks anywhere on the bar
+  // resolve to its marker(s) regardless of tf (was a hard-coded 60s
+  // before, which silently broke everything beyond 1m).
+  const tfSec = tfSeconds(chartState.tf);
+  const tol = Math.max(30, tfSec / 2);
   const t = param.time;
-  const hits = chartState._markers.filter((m) => Math.abs(m.time - t) < 60);
+  const hits = chartState._markers.filter((m) => Math.abs(m.time - t) < tol);
   if (!hits.length) {
     // Fallback: bar info
     const bar = chartState.data.rows.find((r) => r.time === t);
@@ -1222,18 +1466,87 @@ function renderSymbolTables() {
 }
 
 // Hook chart view into nav: load symbols on first activation.
-const _origSetupNav = setupNav;
-window.addEventListener("DOMContentLoaded", () => {
-  initChartView();
-  document.querySelector('.nav-item[data-view="chart"]')?.addEventListener("click", async () => {
-    if (!chartState.symbols.length) await loadSymbols();
-    if (chartState.current && !chartState.data) loadChart();
-    setTimeout(() => {
-      if (chartState.chart) {
-        const w = q("tv-chart").clientWidth;
-        chartState.chart.applyOptions({ width: w });
-        chartState.volumeChart.applyOptions({ width: w });
-      }
-    }, 50);
-  });
+document.querySelector('.nav-item[data-view="chart"]')?.addEventListener("click", async () => {
+  if (!chartState.symbols.length) await loadSymbols();
+  if (chartState.current && !chartState.data) loadChart();
 });
+
+/* ============================================================
+   Sortable tables — clickable headers with data-sort=text|num.
+   Sort runs against the rendered DOM, so it survives every
+   re-render automatically (idempotent: re-applies on each render).
+   ============================================================ */
+const sortState = new WeakMap(); // table -> {col, dir}
+function setupSortableTables() {
+  document.querySelectorAll("table[data-sortable]").forEach((tbl) => {
+    tbl.querySelectorAll("thead th[data-sort]").forEach((th, idx) => {
+      th.addEventListener("click", () => sortTable(tbl, idx, th.dataset.sort));
+    });
+  });
+}
+function sortTable(tbl, col, kind) {
+  const cur = sortState.get(tbl);
+  const dir = cur && cur.col === col && cur.dir === "asc" ? "desc" : "asc";
+  sortState.set(tbl, { col, dir, kind });
+  applySort(tbl);
+  tbl.querySelectorAll("thead th").forEach((th, i) => {
+    th.classList.remove("sort-asc", "sort-desc");
+    if (i === col) th.classList.add(dir === "asc" ? "sort-asc" : "sort-desc");
+  });
+}
+function applySort(tbl) {
+  const s = sortState.get(tbl);
+  if (!s) return;
+  const tbody = tbl.querySelector("tbody");
+  if (!tbody) return;
+  const rows = Array.from(tbody.querySelectorAll("tr:not(.detail-row)"));
+  const factor = s.dir === "asc" ? 1 : -1;
+  const parseCell = (tr) => {
+    const td = tr.cells[s.col];
+    if (!td) return s.kind === "num" ? -Infinity : "";
+    const txt = td.textContent.trim();
+    if (s.kind === "num") {
+      const n = parseFloat(txt.replace(/[^0-9.\-]/g, ""));
+      return Number.isFinite(n) ? n : -Infinity;
+    }
+    return txt.toLowerCase();
+  };
+  rows.sort((a, b) => {
+    const va = parseCell(a), vb = parseCell(b);
+    if (va < vb) return -1 * factor;
+    if (va > vb) return 1 * factor;
+    return 0;
+  });
+  // Re-append in order; preserve any expand/detail rows attached
+  // immediately after their parent (prompts table).
+  for (const tr of rows) {
+    tbody.appendChild(tr);
+    const next = tr.nextSibling;
+    if (next && next.classList && next.classList.contains("detail-row")) {
+      tbody.appendChild(next);
+    }
+  }
+}
+// Re-apply sort after each table render.
+function reapplySorts() {
+  document.querySelectorAll("table[data-sortable]").forEach(applySort);
+}
+
+/* ============================================================
+   Symbol search — filter the chart-view symbol dropdown.
+   ============================================================ */
+function setupSymbolSearch() {
+  const input = q("chart-symbol-search");
+  const sel = q("chart-symbol");
+  if (!input || !sel) return;
+  input.addEventListener("input", () => {
+    const needle = input.value.trim().toUpperCase();
+    let firstVisible = null;
+    Array.from(sel.options).forEach((opt) => {
+      const match = !needle || opt.value.toUpperCase().includes(needle);
+      opt.hidden = !match;
+      if (match && firstVisible === null) firstVisible = opt;
+    });
+    if (firstVisible && needle) sel.value = firstVisible.value;
+  });
+}

@@ -68,8 +68,9 @@ async def _run(args: argparse.Namespace) -> int:
     rdir = run_dir(cfg, rid)
     rdir.mkdir(parents=True, exist_ok=True)
     audit = AuditWriter(run_dir=rdir)
+    budget_state = cfg.data_root / "state" / "budget.json"
     budget = BudgetTracker(daily_cap_usd=cfg.ai_budget_usd_per_day,
-                           state_path=rdir / "budget.json")
+                           state_path=budget_state)
     ai = AIClient(cfg=cfg, budget=budget, audit=audit)
     exec_loop = ExecLoop.build(
         cfg=cfg, feature_cfg=feature_cfg, ai=ai,

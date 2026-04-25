@@ -36,6 +36,7 @@ if str(_SRC) not in sys.path:
 from ai import AIClient, AuditWriter, BudgetTracker  # noqa: E402
 from core.config import load_config  # noqa: E402
 from core.ids import run_id as _new_run_id  # noqa: E402
+from core.lock import LockBusy, file_lock  # noqa: E402
 from core.paths import run_dir  # noqa: E402
 from features.config import FeatureConfig  # noqa: E402
 from loops.exec import ExecConfig, ExecLoop  # noqa: E402
@@ -79,8 +80,13 @@ async def _run(args: argparse.Namespace) -> int:
     rdir = run_dir(cfg, rid)
     rdir.mkdir(parents=True, exist_ok=True)
     audit = AuditWriter(run_dir=rdir)
+    # Budget state is global (shared across runs/restarts) so the
+    # daily cap is enforced even if run_exec.py is restarted with a
+    # fresh run_id. Without this, every restart resets the counter
+    # and the system can spend N x cap per day.
+    budget_state = cfg.data_root / "state" / "budget.json"
     budget = BudgetTracker(daily_cap_usd=cfg.ai_budget_usd_per_day,
-                           state_path=rdir / "budget.json")
+                           state_path=budget_state)
     ai = AIClient(cfg=cfg, budget=budget, audit=audit)
     exec_loop = ExecLoop.build(
         cfg=cfg, feature_cfg=feature_cfg, ai=ai,
@@ -132,11 +138,22 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
     args = _parse_args(argv)
+    # Singleton lock: refuse to start a second exec loop in parallel.
+    # Two scanners would each fire chat_watchlist on cold start and
+    # double-bill OpenRouter before the watchlist-reuse guard can win
+    # the race.
+    cfg_for_lock = load_config()
+    lock_path = cfg_for_lock.data_root / "state" / "run_exec.lock"
     try:
-        return asyncio.run(_run(args))
-    except KeyboardInterrupt:
-        log.info("run_exec interrupted")
-        return 0
+        with file_lock(lock_path):
+            try:
+                return asyncio.run(_run(args))
+            except KeyboardInterrupt:
+                log.info("run_exec interrupted")
+                return 0
+    except LockBusy as e:
+        log.error("refusing to start: %s", e)
+        return 3
 
 
 if __name__ == "__main__":

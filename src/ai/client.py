@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 import uuid
 from dataclasses import dataclass
@@ -65,8 +66,16 @@ class AIClient:
         self.cfg = cfg
         self.budget = budget
         self.audit = audit
+        # Hard kill-switch: ``AI_KILL_SWITCH=1`` forces the offline
+        # MockRouter regardless of every other config value. Use this
+        # to stop the bleeding immediately if the bot starts spending
+        # unexpectedly. Falls through to the existing offline gates.
+        kill_switch = os.getenv("AI_KILL_SWITCH", "").strip().lower() in (
+            "1", "true", "yes", "on",
+        )
         self._offline = (
-            cfg.bybit_offline
+            kill_switch
+            or cfg.bybit_offline
             or cfg.ai_dry_run
             or not cfg.openrouter_api_key
         )

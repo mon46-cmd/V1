@@ -97,7 +97,7 @@ async def _main() -> int:
 
     budget = BudgetTracker(
         daily_cap_usd=cfg.ai_budget_usd_per_day,
-        state_path=run_dir / "budget.json" if not args.no_save else None,
+        state_path=(cfg.data_root / "state" / "budget.json") if not args.no_save else None,
     )
     audit = AuditWriter(run_dir=run_dir) if not args.no_save else None
 

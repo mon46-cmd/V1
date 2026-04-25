@@ -72,6 +72,28 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     )
     app.state.cfg = cfg
 
+    @app.middleware("http")
+    async def _security_headers(request, call_next):  # type: ignore[no-untyped-def]
+        response = await call_next(request)
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        # The dashboard ships only same-origin assets + two CDN libs
+        # (Chart.js + lightweight-charts) loaded from index.html. We
+        # keep CSP modest so a future operator can paste their own
+        # CDN without hitting a deny-by-default wall.
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net "
+            "https://unpkg.com; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; "
+            "connect-src 'self'; "
+            "frame-ancestors 'none'",
+        )
+        return response
+
     # ---- discovery helpers -------------------------------------------
     def _list_runs() -> list[dict]:
         root = cfg.run_root
@@ -176,7 +198,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     @app.get("/api/runs/{run_id}/watchlist")
     def get_watchlist(run_id: str) -> Any:
-        return _read_json(_resolve_run(run_id) / "watchlist.json", default={})
+        raw = _read_json(_resolve_run(run_id) / "watchlist.json", default={})
+        return _normalise_watchlist(raw)
 
     @app.get("/api/runs/{run_id}/triggers")
     def get_triggers(
@@ -342,6 +365,45 @@ def _read_json(path: Path, *, default: Any) -> Any:
     except json.JSONDecodeError:
         log.warning("malformed JSON at %s", path)
         return default
+
+
+def _watchlist_symbols(payload: Any) -> list[str]:
+    """Return the symbols in a ``watchlist.json`` payload regardless of
+    schema shape. Supports both the legacy ``{"symbols": [...]}`` form
+    and the canonical ``WatchlistResponse`` form with a top-level
+    ``selections`` list.
+    """
+    if not isinstance(payload, dict):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for sym in payload.get("symbols") or []:
+        if isinstance(sym, str) and sym and sym not in seen:
+            out.append(sym)
+            seen.add(sym)
+    for sel in payload.get("selections") or []:
+        if isinstance(sel, dict):
+            sym = sel.get("symbol")
+            if isinstance(sym, str) and sym and sym not in seen:
+                out.append(sym)
+                seen.add(sym)
+    for sel in payload.get("shortlist") or []:  # forward-compat
+        if isinstance(sel, dict):
+            sym = sel.get("symbol")
+            if isinstance(sym, str) and sym and sym not in seen:
+                out.append(sym)
+                seen.add(sym)
+    return out
+
+
+def _normalise_watchlist(payload: Any) -> dict:
+    """Return a JSON-serialisable dict that always carries ``symbols``
+    plus passes through the original payload (so the UI can render the
+    full thesis / regime block when present).
+    """
+    base: dict = dict(payload) if isinstance(payload, dict) else {}
+    base["symbols"] = _watchlist_symbols(payload)
+    return base
 
 
 def _tail_jsonl(path: Path, *, limit: int) -> list[dict]:
@@ -791,7 +853,7 @@ def _collect_symbols(run_dir: Path, *, cache_root: Path) -> list[dict]:
         bump(r.get("symbol"), "reviews")
 
     watchlist = _read_json(run_dir / "watchlist.json", default={})
-    for sym in watchlist.get("symbols") or []:
+    for sym in _watchlist_symbols(watchlist):
         bump(sym, "watchlist")
 
     portfolio = _read_json(run_dir / "portfolio.json", default={})

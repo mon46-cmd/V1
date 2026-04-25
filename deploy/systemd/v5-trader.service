@@ -7,6 +7,31 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
+# Reference unit for a default ~/v5 install under systemd --user.
+# For production installs on arbitrary paths, prefer `sudo deploy/install.sh`
+# which renders system-level units with absolute paths.
+WorkingDirectory=%h/v5
+EnvironmentFile=%h/v5/.env
+ExecStart=%h/v5/.venv/bin/python %h/v5/scripts/run_exec.py
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=yes
+ProtectSystem=full
+ReadWritePaths=%h/v5/data
+
+[Install]
+WantedBy=default.target[Unit]
+Description=V5 paper-orchestrator (scanner + exec loop)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
 # Default install path is ~/v5. If your clone lives elsewhere (e.g. ~/V1)
 # create a drop-in override:
 #   systemctl --user edit v5-trader.service
@@ -23,17 +48,12 @@ TimeoutStopSec=30
 # data/logs/ for replay and grep.
 StandardOutput=journal
 StandardError=journal
-# --- Hardening (only directives that always work under --user systemd) ---
-# Other hardening (ProtectKernel*, LockPersonality, RestrictRealtime,
-# RestrictSUIDSGID, MemoryDenyWriteExecute, strict SystemCallFilter,
-# ProtectSystem=strict, ProtectHome=read-only, RestrictNamespaces,
-# PrivateDevices) is intentionally OFF: under user-mode systemd they
-# either fail with 218/CAPABILITIES or break numpy/pandas/uvloop.
+# --- Hardening (minimal: most directives need root or unprivileged-userns) ---
+# When you eventually move to a system unit, re-enable: NoNewPrivileges,
+# PrivateTmp, ProtectSystem=full, ProtectHome, MemoryMax, LimitNOFILE,
+# RestrictRealtime. Under --user systemd they all risk 218/CAPABILITIES
+# or "resources" failures depending on the kernel + cgroup delegation.
 NoNewPrivileges=yes
-PrivateTmp=yes
-# Resource caps - tune if you load more symbols.
-LimitNOFILE=4096
-MemoryMax=2G
 
 [Install]
 WantedBy=default.target

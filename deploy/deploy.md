@@ -1,4 +1,26 @@
-# V5 - Debian VPS deployment guide
+# V5 Deployment
+
+The recommended deployment entrypoint is [deploy/README.md](README.md) and,
+on a real VPS, the single command is:
+
+```bash
+sudo deploy/install.sh
+```
+
+Shipped artefacts in this folder:
+
+- `install.sh`: renders absolute-path system units into `/etc/systemd/system/`
+- `uninstall.sh`: removes those installed units
+- `run_nohup.sh`: fallback for hosts without a usable systemd setup
+- `logrotate.v5`: logrotate config template with `__V5_HOME__` placeholder
+- `systemd/*.service`: reference units for a default `~/v5` install
+- `systemd/*.tmpl`: templates consumed by `install.sh`
+
+If your server cannot run the systemd installer, use:
+
+```bash
+deploy/run_nohup.sh start
+```# V5 - Debian VPS deployment guide
 
 This is the canonical recipe to bring up a fresh Debian 12 (bookworm)
 or Ubuntu 24.04 LTS VPS running the V5 paper-orchestrator under an

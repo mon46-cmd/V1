@@ -1,5 +1,5 @@
 [Unit]
-Description=V5 read-only dashboard / API (FastAPI on 127.0.0.1:8765)
+Description=V5 read-only dashboard / API
 After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=600
@@ -10,8 +10,10 @@ Type=simple
 # Reference unit for a default ~/v5 install under systemd --user.
 # For production installs on arbitrary paths, prefer `sudo deploy/install.sh`.
 WorkingDirectory=%h/v5
+Environment=API_HOST=127.0.0.1
+Environment=API_PORT=8765
 EnvironmentFile=%h/v5/.env
-ExecStart=%h/v5/.venv/bin/python %h/v5/scripts/run_api.py --host 127.0.0.1 --port 8765
+ExecStart=%h/v5/.venv/bin/python %h/v5/scripts/run_api.py
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=15

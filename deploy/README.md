@@ -123,6 +123,40 @@ The health probe has three outcomes by design:
 The shipped systemd health unit treats `1` as successful so a non-fatal warn
 does not mark `v5-health.service` as failed.
 
+## 10.1 Expose the API publicly (no SSH tunnel)
+
+This dashboard has no auth. If you expose it publicly, anyone who can reach the
+port can read it. If that is acceptable for your use case, use these exact
+blocks.
+
+```bash
+cd ~/V1
+grep -q '^API_HOST=' .env && sed -i 's/^API_HOST=.*/API_HOST=0.0.0.0/' .env || echo 'API_HOST=0.0.0.0' >> .env
+grep -q '^API_PORT=' .env && sed -i 's/^API_PORT=.*/API_PORT=8765/' .env || echo 'API_PORT=8765' >> .env
+sudo systemctl restart v5-api.service
+```
+
+If UFW is enabled:
+
+```bash
+sudo ufw allow 8765/tcp
+sudo ufw status
+```
+
+If you are on GCP / AWS / Azure, also open TCP `8765` in the cloud firewall / security group.
+
+Then open in any browser:
+
+```text
+http://<VPS-IP>:8765/
+```
+
+Health endpoint:
+
+```text
+http://<VPS-IP>:8765/health
+```
+
 ## 11. Day-to-day operations
 
 ### Restart the trader and API
@@ -158,7 +192,7 @@ sudo deploy/uninstall.sh
 
 ## 12. Reach the API from your laptop
 
-The API binds to loopback only. Tunnel it over SSH instead of opening a public port.
+If you keep the default private bind, tunnel it over SSH instead of opening a public port.
 
 ```bash
 ssh -N -L 8765:127.0.0.1:8765 user@<vps-ip>

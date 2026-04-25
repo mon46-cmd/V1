@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -26,9 +27,11 @@ from core.config import load_config  # noqa: E402
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    default_host = os.getenv("API_HOST", "127.0.0.1")
+    default_port = int(os.getenv("API_PORT", "8765"))
     p = argparse.ArgumentParser(description="V5 dashboard / API")
-    p.add_argument("--host", default="127.0.0.1")
-    p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--host", default=default_host)
+    p.add_argument("--port", type=int, default=default_port)
     p.add_argument("--log-level", default="info")
     p.add_argument("--reload", action="store_true",
                    help="dev-mode autoreload (requires uvicorn[standard])")

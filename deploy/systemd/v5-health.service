@@ -4,10 +4,9 @@ Wants=v5-health.timer
 
 [Service]
 Type=oneshot
-Environment=V5_HOME=%h/v5
-WorkingDirectory=${V5_HOME}
-EnvironmentFile=${V5_HOME}/.env
-ExecStart=${V5_HOME}/.venv/bin/python ${V5_HOME}/scripts/health_check.py \
+WorkingDirectory=%h/v5
+EnvironmentFile=%h/v5/.env
+ExecStart=%h/v5/.venv/bin/python %h/v5/scripts/health_check.py \
     --services v5-trader v5-api \
     --api-url http://127.0.0.1:8765 \
     --format text

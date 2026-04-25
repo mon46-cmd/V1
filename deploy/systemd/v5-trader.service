@@ -7,13 +7,15 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
-# V5_HOME defaults to ~/v5. Override with `systemctl --user edit v5-trader`
-# and add e.g. `Environment=V5_HOME=%h/V1` if your clone lives elsewhere.
-Environment=V5_HOME=%h/v5
-WorkingDirectory=${V5_HOME}
-EnvironmentFile=${V5_HOME}/.env
+# Default install path is ~/v5. If your clone lives elsewhere (e.g. ~/V1)
+# create a drop-in override:
+#   systemctl --user edit v5-trader.service
+# and override WorkingDirectory / EnvironmentFile / ExecStart together
+# (Environment= variables do NOT expand in WorkingDirectory/EnvironmentFile).
+WorkingDirectory=%h/v5
+EnvironmentFile=%h/v5/.env
 # Loopback-only by default; rely on the venv's Python and our launcher.
-ExecStart=${V5_HOME}/.venv/bin/python ${V5_HOME}/scripts/run_exec.py
+ExecStart=%h/v5/.venv/bin/python %h/v5/scripts/run_exec.py
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=30

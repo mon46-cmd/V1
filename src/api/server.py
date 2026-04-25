@@ -298,6 +298,16 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             d, symbol=symbol, call_type=call_type, limit=limit,
         )}
 
+    @app.get("/api/ai/calls/{call_id}")
+    def ai_call_detail(call_id: str, run_id: str | None = None) -> dict:
+        d = _resolve_run(run_id)
+        try:
+            return _ai_call_detail(d, call_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @app.get("/api/live")
     async def live_stream(
         request: Request,
@@ -396,6 +406,64 @@ def _sanitise_prompt(row: dict) -> dict:
         out["response"] = {k: v for k, v in resp.items()
                            if k not in _PROMPT_SANITISE_FIELDS}
     return out
+
+
+def _safe_call_id(call_id: str) -> str:
+    if (not call_id or "/" in call_id or "\\" in call_id
+            or call_id in {".", ".."} or "\x00" in call_id
+            or call_id != Path(call_id).name):
+        raise ValueError("invalid call_id")
+    return call_id
+
+
+def _find_prompt_row(run_dir: Path, call_id: str) -> dict | None:
+    for row in _tail_jsonl(run_dir / "prompts.jsonl", limit=MAX_LIMIT):
+        if row.get("call_id") == call_id:
+            return row
+    return None
+
+
+def _read_json_if_exists(path: Path) -> Any | None:
+    if not path.exists():
+        return None
+    return _read_json(path, default=None)
+
+
+def _ai_call_detail(run_dir: Path, call_id: str) -> dict:
+    call_id = _safe_call_id(call_id)
+    row = _find_prompt_row(run_dir, call_id)
+    if row is None:
+        raise FileNotFoundError(f"call {call_id!r} not found")
+
+    request = _read_json_if_exists(run_dir / "prompts" / f"{call_id}.req.json")
+    response = _read_json_if_exists(run_dir / "prompts" / f"{call_id}.resp.json")
+    if request is None:
+        request = row.get("request") or {}
+    if response is None:
+        response = row.get("response") or {}
+
+    call_type = row.get("call_type") or "unknown"
+    decision = row.get("decision") or {}
+    usage = row.get("usage") or (row.get("response") or {}).get("usage") or {}
+    cost = row.get("cost_usd") or row.get("cost")
+    if cost is None:
+        cost = (row.get("response") or {}).get("cost_usd")
+
+    return {
+        "ts": row.get("ts"),
+        "call_id": call_id,
+        "call_type": call_type,
+        "model": row.get("model"),
+        "symbol": row.get("symbol"),
+        "cost_usd": cost,
+        "tokens_in": usage.get("prompt_tokens"),
+        "tokens_out": usage.get("completion_tokens"),
+        "latency_ms": (row.get("response") or {}).get("latency_ms"),
+        "decision_summary": _decision_summary(call_type, decision),
+        "decision": decision,
+        "request": request,
+        "response": response,
+    }
 
 
 def _build_metrics(run_dir: Path, *, days: int) -> dict:
@@ -702,6 +770,7 @@ def _collect_symbols(run_dir: Path, *, cache_root: Path) -> list[dict]:
         row = counters.setdefault(sym, {
             "symbol": sym, "triggers": 0, "fills": 0, "intents": 0,
             "ai_calls": 0, "reviews": 0, "open_position": 0,
+            "watchlist": 0,
         })
         row[key] += 1
 
@@ -721,6 +790,10 @@ def _collect_symbols(run_dir: Path, *, cache_root: Path) -> list[dict]:
     for r in _tail_jsonl(run_dir / "reviews.jsonl", limit=MAX_LIMIT):
         bump(r.get("symbol"), "reviews")
 
+    watchlist = _read_json(run_dir / "watchlist.json", default={})
+    for sym in watchlist.get("symbols") or []:
+        bump(sym, "watchlist")
+
     portfolio = _read_json(run_dir / "portfolio.json", default={})
     for p in portfolio.get("open_positions") or []:
         sym = p.get("symbol")
@@ -737,7 +810,8 @@ def _collect_symbols(run_dir: Path, *, cache_root: Path) -> list[dict]:
         out.append(row)
     out.sort(
         key=lambda r: (
-            -r["open_position"], -r["fills"], -r["triggers"], r["symbol"],
+            -r["open_position"], -r["watchlist"], -r["fills"],
+            -r["triggers"], r["symbol"],
         )
     )
     return out

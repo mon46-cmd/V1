@@ -53,7 +53,7 @@ def run_tree(tmp_data_root: Path) -> tuple[Path, str]:
     ])
     _write_json(rdir / "watchlist.json", {
         "as_of": "2026-01-01T00:05:00Z",
-        "symbols": ["BTCUSDT"],
+        "symbols": ["BTCUSDT", "SOLUSDT"],
         "rationale": "trend continuation",
     })
     _write_json(rdir / "portfolio.json", {
@@ -104,8 +104,26 @@ def run_tree(tmp_data_root: Path) -> tuple[Path, str]:
          "symbol": "BTCUSDT", "side": "long",
          "size_usd": 5000.0, "stop_loss": 49000.0},
     ])
+    _write_json(rdir / "prompts" / "call-watchlist.req.json", {
+        "system": "Choose up to five pairs with the cleanest momentum and liquidity.",
+        "user": "[{\"symbol\":\"BTCUSDT\"},{\"symbol\":\"SOLUSDT\"}]",
+        "headers": {"authorization": "***"},
+    })
+    _write_json(rdir / "prompts" / "call-watchlist.resp.json", {
+        "raw_text": "{\"market_regime\":\"risk-on\",\"selections\":[{\"symbol\":\"BTCUSDT\",\"side\":\"long\"}]}",
+        "parsed": {"market_regime": "risk-on",
+                   "selections": [{"symbol": "BTCUSDT", "side": "long"}]},
+    })
+    _write_json(rdir / "prompts" / "call-deep.req.json", {
+        "system": "Decide whether to trade BTCUSDT on the current trigger.",
+        "user": "{\"symbol\":\"BTCUSDT\",\"trigger\":\"breakout\"}",
+    })
+    _write_json(rdir / "prompts" / "call-deep.resp.json", {
+        "raw_text": "{\"action\":\"long\",\"confidence\":0.75}",
+        "parsed": {"action": "long", "confidence": 0.75},
+    })
     _write_jsonl(rdir / "prompts.jsonl", [
-        {"ts": now.isoformat(), "call_type": "watchlist",
+        {"ts": now.isoformat(), "call_id": "call-watchlist", "call_type": "watchlist",
          "model": "x-ai/grok-4.20",
          "request": {"system": "SECRET-SYSTEM", "user": "SECRET-USER",
                      "schema": "watchlist"},
@@ -116,13 +134,13 @@ def run_tree(tmp_data_root: Path) -> tuple[Path, str]:
                                       "confidence": 0.8, "thesis": "trend"}]},
          "usage": {"prompt_tokens": 200, "completion_tokens": 30},
          "cost_usd": 0.001},
-        {"ts": now.isoformat(), "call_type": "trigger",
+        {"ts": now.isoformat(), "call_id": "call-trigger", "call_type": "trigger",
          "model": "x-ai/grok-4.20",
          "request": {"system": "S", "user": "U"},
          "response": {"decision": {"action": "enter"}},
          "usage": {"prompt_tokens": 100, "completion_tokens": 20},
          "cost_usd": 0.0005},
-        {"ts": now.isoformat(), "call_type": "deep",
+        {"ts": now.isoformat(), "call_id": "call-deep", "call_type": "deep",
          "symbol": "BTCUSDT", "model": "x-ai/grok-4.20",
          "request": {"system": "S", "user": "U"},
          "response": {"latency_ms": 100},
@@ -203,7 +221,7 @@ def test_watchlist(client: TestClient, run_tree) -> None:
     _, rid = run_tree
     r = client.get(f"/api/runs/{rid}/watchlist")
     assert r.status_code == 200
-    assert r.json()["symbols"] == ["BTCUSDT"]
+    assert r.json()["symbols"] == ["BTCUSDT", "SOLUSDT"]
 
 
 def test_prompts_sanitised(client: TestClient, run_tree) -> None:
@@ -440,11 +458,14 @@ def test_symbols_endpoint(client: TestClient) -> None:
     assert r.status_code == 200
     rows = r.json()["rows"]
     assert any(row["symbol"] == "BTCUSDT" for row in rows)
+    assert any(row["symbol"] == "SOLUSDT" for row in rows)
     btc = next(row for row in rows if row["symbol"] == "BTCUSDT")
     assert btc["fills"] == 3
     assert btc["triggers"] == 1
     assert btc["ai_calls"] >= 2  # deep + watchlist selection
     assert btc["open_position"] == 1
+    sol = next(row for row in rows if row["symbol"] == "SOLUSDT")
+    assert sol["watchlist"] == 1
 
 
 def test_candles_missing(client: TestClient) -> None:
@@ -523,6 +544,23 @@ def test_ai_calls_enriched(client: TestClient) -> None:
     wl = next(r for r in rows if r["call_type"] == "watchlist")
     assert wl["decision_summary"]["market_regime"] == "risk-on"
     assert wl["decision_summary"]["selections"][0]["symbol"] == "BTCUSDT"
+
+
+def test_ai_call_detail_returns_full_sidecars(client: TestClient, run_tree) -> None:
+    _, rid = run_tree
+    r = client.get(f"/api/ai/calls/call-watchlist?run_id={rid}")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["call_id"] == "call-watchlist"
+    assert body["request"]["system"].startswith("Choose up to five pairs")
+    assert body["request"]["headers"]["authorization"] == "***"
+    assert "BTCUSDT" in body["response"]["raw_text"]
+
+
+def test_ai_call_detail_unknown_returns_404(client: TestClient, run_tree) -> None:
+    _, rid = run_tree
+    r = client.get(f"/api/ai/calls/does-not-exist?run_id={rid}")
+    assert r.status_code == 404
 
 
 def test_ai_calls_filter_symbol(client: TestClient) -> None:

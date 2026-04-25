@@ -20,6 +20,7 @@ const state = {
   universe: [],
   watchlist: null,
   positions: [],
+  promptDetails: {},
   sse: null,
   liveLog: [],
   liveCounts: { trigger: 0, intent: 0, fill: 0, review: 0 },
@@ -41,6 +42,7 @@ const COLORS = {
 
 const TYPE_COLORS = {
   watchlist: COLORS.accent,
+  deep: COLORS.purple,
   trigger: COLORS.purple,
   review: COLORS.warn,
   unknown: COLORS.teal,
@@ -155,6 +157,14 @@ async function loadPrompts() {
   const lim = q("prompt-filter-limit").value;
   const url = `/api/ai/calls?run_id=${rid()}&limit=${lim}` + (t ? `&call_type=${t}` : "");
   state.prompts = (await fetchJSON(url)).rows || [];
+}
+
+async function loadPromptDetail(callId) {
+  if (!callId) return null;
+  if (state.promptDetails[callId]) return state.promptDetails[callId];
+  const detail = await fetchJSON(`/api/ai/calls/${encodeURIComponent(callId)}?run_id=${rid()}`);
+  state.promptDetails[callId] = detail;
+  return detail;
 }
 
 /* ============================================================
@@ -541,18 +551,39 @@ function renderPrompts() {
     const det = document.createElement("tr");
     det.className = "detail-row";
     det.style.display = "none";
-    det.innerHTML = `<td colspan="9">${renderPromptDetailHtml(p)}</td>`;
+    det.innerHTML = `<td colspan="9">${renderPromptDetailHtml(p, state.promptDetails[p.call_id])}</td>`;
     tbody.appendChild(det);
+    wirePromptDetailActions(det);
 
-    tr.addEventListener("click", () => {
-      det.style.display = det.style.display === "none" ? "" : "none";
+    tr.addEventListener("click", async () => {
+      const opening = det.style.display === "none";
+      det.style.display = opening ? "" : "none";
+      if (!opening || !p.call_id || state.promptDetails[p.call_id]) return;
+      det.querySelector("td").innerHTML = `<p class="dim">loading full prompt / response…</p>`;
+      try {
+        const detail = await loadPromptDetail(p.call_id);
+        det.querySelector("td").innerHTML = renderPromptDetailHtml(p, detail);
+      } catch (e) {
+        det.querySelector("td").innerHTML = renderPromptDetailHtml(p, { error: e.message });
+      }
+      wirePromptDetailActions(det);
     });
   }
 }
 
-function renderPromptDetailHtml(p) {
-  const ds = p.decision_summary || {};
+function renderPromptDetailHtml(p, detail) {
+  const ds = (detail && detail.decision_summary) || p.decision_summary || {};
   const parts = [];
+  const selectedSymbols = new Set();
+  if (p.symbol) selectedSymbols.add(p.symbol);
+  for (const sel of ds.selections || []) {
+    if (sel && sel.symbol) selectedSymbols.add(sel.symbol);
+  }
+  if (selectedSymbols.size) {
+    parts.push(`<div class="prompt-actions">${[...selectedSymbols].map((symbol) =>
+      `<button type="button" class="btn-inline jump-chart" data-chart-symbol="${escapeHtml(symbol)}">chart ${escapeHtml(symbol)}</button>`
+    ).join("")}</div>`);
+  }
   if (ds.market_regime) {
     parts.push(`<div class="field"><span>regime</span><span>${escapeHtml(ds.market_regime)}</span></div>`);
   }
@@ -576,14 +607,42 @@ function renderPromptDetailHtml(p) {
   }
   if (Array.isArray(ds.selections) && ds.selections.length) {
     parts.push(`<h3>selections</h3><ul>${ds.selections.map((s) =>
-      `<li><strong>${escapeHtml(s.symbol || "?")}</strong> ${escapeHtml(s.side || "")}` +
+      `<li><button type="button" class="chip chip-action jump-chart" data-chart-symbol="${escapeHtml(s.symbol || "")}"><strong>${escapeHtml(s.symbol || "?")}</strong></button> ${escapeHtml(s.side || "")}` +
       ` · conf ${s.confidence != null ? (s.confidence * 100).toFixed(0) + "%" : "?"}` +
       ` · ${escapeHtml(s.thesis || "")}</li>`).join("")}</ul>`);
   }
   if (ds.rationale) parts.push(`<h3>rationale</h3><p>${escapeHtml(ds.rationale)}</p>`);
   if (ds.invalidation) parts.push(`<h3>invalidation</h3><p>${escapeHtml(ds.invalidation)}</p>`);
-  parts.push(`<h3>raw</h3><pre>${escapeHtml(JSON.stringify(p, null, 2))}</pre>`);
+  if (detail && detail.error) {
+    parts.push(`<p class="bad">${escapeHtml(detail.error)}</p>`);
+  }
+  const req = detail && typeof detail.request === "object" ? detail.request : null;
+  if (req) {
+    parts.push(`<h3>request.system</h3><pre>${escapeHtml(req.system ?? "")}</pre>`);
+    parts.push(`<h3>request.user</h3><pre>${escapeHtml(req.user ?? "")}</pre>`);
+  }
+  const resp = detail && typeof detail.response === "object" ? detail.response : null;
+  if (resp) {
+    if (resp.raw_text != null) {
+      parts.push(`<h3>response.raw_text</h3><pre>${escapeHtml(resp.raw_text)}</pre>`);
+    }
+    const parsed = resp.parsed != null ? resp.parsed : (resp.json != null ? resp.json : null);
+    if (parsed != null) {
+      parts.push(`<h3>response.parsed</h3><pre>${escapeHtml(JSON.stringify(parsed, null, 2))}</pre>`);
+    }
+  }
+  parts.push(`<h3>raw summary</h3><pre>${escapeHtml(JSON.stringify(detail || p, null, 2))}</pre>`);
   return parts.join("");
+}
+
+function wirePromptDetailActions(host) {
+  host.querySelectorAll("[data-chart-symbol]").forEach((el) => {
+    el.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      await selectChartSymbol(el.dataset.chartSymbol, { openView: true });
+    });
+  });
 }
 
 /* ---------- Universe / watchlist ---------- */
@@ -593,10 +652,12 @@ function renderUniverse() {
   const rows = Array.isArray(state.universe) ? state.universe : [];
   q("universe-count").textContent = rows.length ? `(${rows.length})` : "";
   for (const r of rows) {
-    const chip = document.createElement("span");
-    chip.className = "chip";
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chip chip-action";
     const score = r.score != null ? Number(r.score).toFixed(2) : "";
     chip.innerHTML = `<strong>${escapeHtml(r.symbol || "?")}</strong>${score}`;
+    chip.addEventListener("click", () => { void selectChartSymbol(r.symbol, { openView: true }); });
     box.appendChild(chip);
   }
 }
@@ -608,8 +669,11 @@ function renderWatchlist() {
   const syms = wl.symbols || [];
   if (!syms.length) { box.textContent = "no watchlist"; return; }
   for (const s of syms) {
-    const chip = document.createElement("span");
-    chip.className = "chip"; chip.innerHTML = `<strong>${escapeHtml(s)}</strong>`;
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chip chip-action";
+    chip.innerHTML = `<strong>${escapeHtml(s)}</strong>`;
+    chip.addEventListener("click", () => { void selectChartSymbol(s, { openView: true }); });
     box.appendChild(chip);
   }
 }
@@ -816,6 +880,7 @@ async function loadSymbols() {
       opt.value = r.symbol;
       const tags = [];
       if (r.open_position) tags.push("●");
+      if (r.watchlist) tags.push("wl");
       if (r.fills) tags.push(`${r.fills}f`);
       if (r.triggers) tags.push(`${r.triggers}t`);
       if (r.ai_calls) tags.push(`${r.ai_calls}ai`);
@@ -823,11 +888,31 @@ async function loadSymbols() {
       opt.textContent = `${r.symbol}  ${tags.join(" ")}`;
       sel.appendChild(opt);
     }
-    if (!chartState.current) {
+    const availableSymbols = new Set(chartState.symbols.map((row) => row.symbol));
+    if (!chartState.current || !availableSymbols.has(chartState.current)) {
       chartState.current = chartState.symbols[0].symbol;
     }
     sel.value = chartState.current;
   } catch (e) { console.warn(e); }
+}
+
+async function selectChartSymbol(symbol, { openView = false } = {}) {
+  if (!symbol) return;
+  if (!chartState.symbols.length) await loadSymbols();
+  initChartView();
+  const sel = q("chart-symbol");
+  if (sel && !Array.from(sel.options).some((opt) => opt.value === symbol)) {
+    const opt = document.createElement("option");
+    opt.value = symbol;
+    opt.textContent = `${symbol}  manual`;
+    sel.appendChild(opt);
+  }
+  chartState.current = symbol;
+  if (sel) sel.value = symbol;
+  if (openView) {
+    document.querySelector('.nav-item[data-view="chart"]')?.click();
+  }
+  await loadChart();
 }
 
 function ensureChart() {

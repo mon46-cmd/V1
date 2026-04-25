@@ -232,6 +232,18 @@ dl.dl dd { margin: 0; font-family: var(--mono);
   padding: 3px 10px; font-size: 12px; font-family: var(--mono);
 }
 .chip strong { color: var(--accent); margin-right: 4px; }
+.chip-action { cursor: pointer; }
+.chip-action:hover, .chip-action:focus-visible {
+  border-color: var(--accent);
+  color: var(--fg);
+  outline: none;
+}
+.prompt-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
 
 /* ---------------- Live log ---------------- */
 .live-stats {
@@ -336,6 +348,7 @@ pre#live-log .ev-hello { color: var(--fg-dim); }
   max-height: 220px; overflow: auto;
   font-size: 11px;
 }
+.detail-row .bad { color: var(--bad); }
 
 /* AI prompt extras */
 .pill-action-long { border-color: var(--good); color: var(--good); }

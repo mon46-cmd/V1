@@ -89,7 +89,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             "https://unpkg.com; "
             "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data:; "
-            "connect-src 'self'; "
+            "connect-src 'self' https://cdn.jsdelivr.net https://unpkg.com; "
             "frame-ancestors 'none'",
         )
         return response

@@ -274,17 +274,19 @@ async function switchRun(rid) {
 }
 
 const rid = () => encodeURIComponent(state.activeRun);
-async function loadMetrics()    { state.metrics    = await fetchJSON(`/api/metrics?run_id=${rid()}`); }
-async function loadPortfolio()  { state.portfolio  = await fetchJSON(`/api/portfolio?run_id=${rid()}`); }
-async function loadEquity()     { state.equity     = (await fetchJSON(`/api/equity_curve?run_id=${rid()}`)).points || []; }
-async function loadFills()      { state.fills      = (await fetchJSON(`/api/runs/${rid()}/fills?limit=${FILLS_LIMIT}`)).rows || []; }
-async function loadPerfSymbol() { state.perfBySymbol = (await fetchJSON(`/api/performance/by_symbol?run_id=${rid()}`)).rows || []; }
-async function loadPerfDay()    { state.perfByDay  = (await fetchJSON(`/api/performance/by_day?run_id=${rid()}&days=30`)).rows || []; }
-async function loadAIUsage()    { state.aiUsage    = await fetchJSON(`/api/ai/usage?run_id=${rid()}&days=14`); }
-async function loadUniverse()   { state.universe   = await fetchJSON(`/api/runs/${rid()}/universe`); }
-async function loadWatchlist()  { state.watchlist  = await fetchJSON(`/api/runs/${rid()}/watchlist`); }
-async function loadPositions()  { state.positions  = (await fetchJSON(`/api/positions?run_id=${rid()}`)).rows || []; }
+function _hasRun() { return !!state.activeRun; }
+async function loadMetrics()    { if (!_hasRun()) return; state.metrics    = await fetchJSON(`/api/metrics?run_id=${rid()}`); }
+async function loadPortfolio()  { if (!_hasRun()) return; state.portfolio  = await fetchJSON(`/api/portfolio?run_id=${rid()}`); }
+async function loadEquity()     { if (!_hasRun()) return; state.equity     = (await fetchJSON(`/api/equity_curve?run_id=${rid()}`)).points || []; }
+async function loadFills()      { if (!_hasRun()) return; state.fills      = (await fetchJSON(`/api/runs/${rid()}/fills?limit=${FILLS_LIMIT}`)).rows || []; }
+async function loadPerfSymbol() { if (!_hasRun()) return; state.perfBySymbol = (await fetchJSON(`/api/performance/by_symbol?run_id=${rid()}`)).rows || []; }
+async function loadPerfDay()    { if (!_hasRun()) return; state.perfByDay  = (await fetchJSON(`/api/performance/by_day?run_id=${rid()}&days=30`)).rows || []; }
+async function loadAIUsage()    { if (!_hasRun()) return; state.aiUsage    = await fetchJSON(`/api/ai/usage?run_id=${rid()}&days=14`); }
+async function loadUniverse()   { if (!_hasRun()) return; state.universe   = await fetchJSON(`/api/runs/${rid()}/universe`); }
+async function loadWatchlist()  { if (!_hasRun()) return; state.watchlist  = await fetchJSON(`/api/runs/${rid()}/watchlist`); }
+async function loadPositions()  { if (!_hasRun()) return; state.positions  = (await fetchJSON(`/api/positions?run_id=${rid()}`)).rows || []; }
 async function loadPrompts() {
+  if (!_hasRun()) return;
   const t = q("prompt-filter-type").value;
   const lim = q("prompt-filter-limit").value;
   const url = `/api/ai/calls?run_id=${rid()}&limit=${lim}` + (t ? `&call_type=${t}` : "");
@@ -1104,6 +1106,7 @@ function buildToggle(hostId, names, set, onChange) {
 }
 
 async function loadSymbols() {
+  if (!_hasRun()) { chartState.symbols = []; return; }
   try {
     const data = await fetchJSON(`/api/symbols?run_id=${rid()}`);
     chartState.symbols = data.rows || [];
@@ -1467,6 +1470,7 @@ function renderSymbolTables() {
 
 // Hook chart view into nav: load symbols on first activation.
 document.querySelector('.nav-item[data-view="chart"]')?.addEventListener("click", async () => {
+  if (!_hasRun()) return;
   if (!chartState.symbols.length) await loadSymbols();
   if (chartState.current && !chartState.data) loadChart();
 });

@@ -23,19 +23,14 @@ TimeoutStopSec=30
 # data/logs/ for replay and grep.
 StandardOutput=journal
 StandardError=journal
-# --- Hardening (safe under --user systemd + CPython native extensions) ---
-# NOTE: MemoryDenyWriteExecute, strict SystemCallFilter, ProtectSystem=strict,
-# RestrictNamespaces, PrivateDevices and ProtectHome=read-only are intentionally
-# OFF: they routinely break numpy / pandas / uvloop / ctypes on stock kernels
-# and are the most common cause of "unavailable resources" job failures.
+# --- Hardening (only directives that always work under --user systemd) ---
+# Other hardening (ProtectKernel*, LockPersonality, RestrictRealtime,
+# RestrictSUIDSGID, MemoryDenyWriteExecute, strict SystemCallFilter,
+# ProtectSystem=strict, ProtectHome=read-only, RestrictNamespaces,
+# PrivateDevices) is intentionally OFF: under user-mode systemd they
+# either fail with 218/CAPABILITIES or break numpy/pandas/uvloop.
 NoNewPrivileges=yes
 PrivateTmp=yes
-ProtectKernelTunables=yes
-ProtectKernelModules=yes
-ProtectControlGroups=yes
-RestrictRealtime=yes
-RestrictSUIDSGID=yes
-LockPersonality=yes
 # Resource caps - tune if you load more symbols.
 LimitNOFILE=4096
 MemoryMax=2G

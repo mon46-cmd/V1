@@ -1,146 +1,197 @@
-# V5 — VPS deployment
+# V5 Deploy Quickstart
 
-Two paths, pick one:
+This guide is written as literal copy-paste blocks.
 
-| Approach              | When to use                              | Auto-restart? |
-|-----------------------|------------------------------------------|---------------|
-| **systemd installer** | Real VPS with systemd available          | Yes           |
-| **nohup runner**      | Containers, WSL, locked-down VMs         | No            |
+All examples below assume the repo is cloned into `~/V1`, which matches the
+current production workflow.
 
-The systemd path uses **system-level units** with `User=` directive,
-not `--user` units. This avoids the cgroup-delegation and namespace
-problems that plague user-mode systemd on stock cloud images.
-
----
-
-## Prerequisites
-
-Working V5 clone with:
+## 1. Base packages
 
 ```bash
-cd ~/V1            # or wherever you cloned
-./setup.sh --dev   # builds .venv + des_core
-cp .env.example .env
-chmod 600 .env
-nano .env          # set OPENROUTER_API_KEY etc.
-BYBIT_OFFLINE=1 .venv/bin/python -m pytest -q --timeout=60
-# expect: 221 passed, 20 skipped
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y build-essential git curl wget vim unzip pkg-config libssl-dev jq cmake autoconf automake
 ```
 
----
-
-## Path A — systemd (recommended)
-
-One command. Run from the V5 clone root:
+## 2. Rust toolchain
 
 ```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+source $HOME/.cargo/env
+```
+
+## 3. `uv`
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source $HOME/.cargo/env
+export PATH="$HOME/.local/bin:$PATH"
+source ~/.bashrc
+```
+
+## 4. Python 3.12.13
+
+```bash
+uv python install 3.12.13
+sudo ln -sf $(uv python find 3.12.13) /usr/local/bin/python3.12
+```
+
+## 5. Clone and install the repo
+
+```bash
+git clone https://github.com/mon46-cmd/V1
+sudo chown -R $USER:$USER ~/V1
+cd ~/V1
+chmod +x setup.sh
+./setup.sh --dev
+```
+
+## 6. Create `.env`
+
+```bash
+cp .env.example .env
+chmod 600 .env
+nano .env
+```
+
+Minimum fields to set before starting services:
+
+```dotenv
+OPENROUTER_API_KEY=sk-or-...
+BYBIT_API_KEY=...
+BYBIT_API_SECRET=...
+```
+
+Leave `BYBIT_OFFLINE` blank for a live VPS. Set it to `1` only for smoke tests.
+
+## 7. Validate the install offline
+
+```bash
+cd ~/V1
+source .venv/bin/activate
+BYBIT_OFFLINE=1 pytest --timeout=60 -q
+```
+
+Expected result:
+
+```text
+221 passed, 20 skipped
+```
+
+## 8. Check Bybit reachability from the VPS
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" https://api.bybit.com/v5/market/time
+```
+
+Interpretation:
+
+- `200`: region is usable, continue.
+- `403`: the VPS region is blocked by Bybit/CloudFront. Stop here and move the VPS.
+
+Known good regions:
+
+- `asia-northeast1` (Tokyo)
+- `asia-east1` (Taiwan)
+- `europe-west4` (Netherlands)
+- `europe-west3` (Frankfurt)
+
+## 9. Install the services
+
+The recommended path is the system-level installer. It renders absolute-path
+units into `/etc/systemd/system/` and runs them as your normal user.
+
+```bash
+cd ~/V1
+chmod +x deploy/install.sh deploy/uninstall.sh deploy/run_nohup.sh
 sudo deploy/install.sh
 ```
 
-What it does:
-
-1. Detects the invoking user (`$SUDO_USER`) and that user's homedir.
-2. Detects `V5_HOME` from where this script lives.
-3. Verifies `.venv/bin/python`, the launcher scripts, and `.env`
-   exist before touching anything.
-4. Renders `deploy/systemd/*.tmpl` into `/etc/systemd/system/` with
-   the absolute paths baked in.
-5. `systemctl daemon-reload`, `enable --now` for trader, api, and
-   the health timer.
-
-Verify:
+## 10. Verify the services
 
 ```bash
 systemctl status v5-trader.service v5-api.service --no-pager -l
-journalctl -u v5-trader.service -f                # live tail
-curl -s http://127.0.0.1:8765/health | jq .       # API on loopback
+journalctl -u v5-trader.service -n 50 --no-pager
+curl -s http://127.0.0.1:8765/health | jq .
 ```
 
-Stop / start / restart:
+## 11. Day-to-day operations
+
+### Restart the trader and API
 
 ```bash
-sudo systemctl stop    v5-trader v5-api v5-health.timer
-sudo systemctl start   v5-trader v5-api v5-health.timer
 sudo systemctl restart v5-trader v5-api
 ```
 
-Remove completely (leaves `data/` and clone intact):
+### Stop everything
 
 ```bash
+sudo systemctl stop v5-trader v5-api v5-health.timer
+```
+
+### Start everything again
+
+```bash
+sudo systemctl start v5-trader v5-api v5-health.timer
+```
+
+### Live tail the trader logs
+
+```bash
+journalctl -u v5-trader.service -f
+```
+
+### Remove the installed services
+
+```bash
+cd ~/V1
 sudo deploy/uninstall.sh
 ```
 
-### Reach the dashboard from your laptop
+## 12. Reach the API from your laptop
 
-The API binds to `127.0.0.1:8765` only — never publish it. Tunnel:
+The API binds to loopback only. Tunnel it over SSH instead of opening a public port.
 
 ```bash
 ssh -N -L 8765:127.0.0.1:8765 user@<vps-ip>
-# then open http://127.0.0.1:8765 in a browser
 ```
 
----
+Then open `http://127.0.0.1:8765` on your laptop.
 
-## Path B — nohup runner (no systemd)
-
-For WSL, Docker images without an init, or hostile policies:
+## 13. Log rotation
 
 ```bash
-deploy/run_nohup.sh start    # launches trader + api in background
+cd ~/V1
+sed "s|__V5_HOME__|$HOME/V1|g" deploy/logrotate.v5 | sudo tee /etc/logrotate.d/v5 > /dev/null
+sudo logrotate -d /etc/logrotate.d/v5
+```
+
+## 14. Fallback when systemd is unavailable
+
+Use this only on hosts where normal systemd service management is not usable.
+
+```bash
+cd ~/V1
+chmod +x deploy/run_nohup.sh
+deploy/run_nohup.sh start
+```
+
+Check status and logs:
+
+```bash
+cd ~/V1
 deploy/run_nohup.sh status
-deploy/run_nohup.sh tail     # follow data/logs/trader.out
+deploy/run_nohup.sh tail
+```
+
+Stop it:
+
+```bash
+cd ~/V1
 deploy/run_nohup.sh stop
 ```
 
-PIDs live in `data/run/*.pid`, logs in `data/logs/*.out`. No
-auto-restart on crash. Add a cron `@reboot` line if you need
-persistence:
+## 15. What not to do
 
-```cron
-@reboot bash -lc 'cd ~/V1 && deploy/run_nohup.sh start'
-```
-
----
-
-## Log rotation
-
-The systemd journal handles its own rotation. Structured JSON logs
-the orchestrator writes under `data/logs/` need an extra step:
-
-```bash
-# System-wide (recommended; needs sudo):
-sed "s|__V5_HOME__|$HOME/V1|g" deploy/logrotate.v5 \
-  | sudo tee /etc/logrotate.d/v5 > /dev/null
-sudo logrotate -d /etc/logrotate.d/v5    # dry-run first
-```
-
-JSONL audit files (`triggers.jsonl`, `intents.jsonl`, `fills.jsonl`,
-`reviews.jsonl`, `prompts.jsonl`) are **intentionally not rotated** —
-they are the canonical history. A 7-day run is < 50 MB.
-
----
-
-## Geo-block warning (Bybit + CloudFront)
-
-Bybit's public REST is fronted by CloudFront and blocks several
-regions. If `curl https://api.bybit.com/v5/market/time` returns 403,
-your VPS is in a blocked country. Provision in:
-
-- `europe-west4` (Netherlands), `europe-west3` (Frankfurt)
-- `asia-northeast1` (Tokyo) — best Bybit RTT
-- `asia-east1` (Taiwan)
-
-The trader **will not start** without REST access. Run with
-`BYBIT_OFFLINE=1` in the `.env` for synthetic-universe smoke testing.
-
----
-
-## Threat model (one paragraph)
-
-The VPS holds one secret of value: `OPENROUTER_API_KEY` in
-`<V5_HOME>/.env`. The dashboard binds to loopback only and is reached
-via `ssh -L`. No inbound port is opened beyond SSH. The trader and
-API run as your unprivileged user with `NoNewPrivileges=yes`. The
-API is read-only. Logs are pruned hourly. If the key leaks, the
-OpenRouter daily budget cap (`AI_BUDGET_USD_PER_DAY`, default $3)
-is the blast radius.
+- Do not use `systemctl --user` with the shipped units on cloud images.
+- Do not publish port `8765` directly to the internet.
+- Do not proceed if the Bybit reachability check returns `403`.

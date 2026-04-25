@@ -7,35 +7,28 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
-WorkingDirectory=%h/v5
-EnvironmentFile=%h/v5/.env
+# V5_HOME defaults to ~/v5. Override with `systemctl --user edit v5-api`
+# and add e.g. `Environment=V5_HOME=%h/V1` if your clone lives elsewhere.
+Environment=V5_HOME=%h/v5
+WorkingDirectory=${V5_HOME}
+EnvironmentFile=${V5_HOME}/.env
 # Bind to loopback only; expose via reverse proxy / SSH tunnel if needed.
-ExecStart=%h/v5/.venv/bin/python %h/v5/scripts/run_api.py --host 127.0.0.1 --port 8765
+ExecStart=${V5_HOME}/.venv/bin/python ${V5_HOME}/scripts/run_api.py --host 127.0.0.1 --port 8765
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=15
 StandardOutput=journal
 StandardError=journal
-# --- Hardening ---
+# --- Hardening (safe under --user systemd + CPython native extensions) ---
+# See v5-trader.service for the rationale on what is intentionally OFF.
 NoNewPrivileges=yes
-ProtectSystem=strict
-ProtectHome=read-only
-# Read-only data tree is enough; the API never writes there.
-ReadOnlyPaths=%h/v5/data
-ReadWritePaths=%h/v5/.venv
 PrivateTmp=yes
-PrivateDevices=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
-RestrictNamespaces=yes
-LockPersonality=yes
-MemoryDenyWriteExecute=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
-SystemCallArchitectures=native
-SystemCallFilter=@system-service
-SystemCallFilter=~@privileged @resources
+LockPersonality=yes
 LimitNOFILE=2048
 MemoryMax=512M
 

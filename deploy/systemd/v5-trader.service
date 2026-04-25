@@ -7,10 +7,13 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
-WorkingDirectory=%h/v5
-EnvironmentFile=%h/v5/.env
+# V5_HOME defaults to ~/v5. Override with `systemctl --user edit v5-trader`
+# and add e.g. `Environment=V5_HOME=%h/V1` if your clone lives elsewhere.
+Environment=V5_HOME=%h/v5
+WorkingDirectory=${V5_HOME}
+EnvironmentFile=${V5_HOME}/.env
 # Loopback-only by default; rely on the venv's Python and our launcher.
-ExecStart=%h/v5/.venv/bin/python %h/v5/scripts/run_exec.py
+ExecStart=${V5_HOME}/.venv/bin/python ${V5_HOME}/scripts/run_exec.py
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=30
@@ -18,24 +21,19 @@ TimeoutStopSec=30
 # data/logs/ for replay and grep.
 StandardOutput=journal
 StandardError=journal
-# --- Hardening (works under --user systemd) ---
+# --- Hardening (safe under --user systemd + CPython native extensions) ---
+# NOTE: MemoryDenyWriteExecute, strict SystemCallFilter, ProtectSystem=strict,
+# RestrictNamespaces, PrivateDevices and ProtectHome=read-only are intentionally
+# OFF: they routinely break numpy / pandas / uvloop / ctypes on stock kernels
+# and are the most common cause of "unavailable resources" job failures.
 NoNewPrivileges=yes
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=%h/v5/data %h/v5/.venv
 PrivateTmp=yes
-PrivateDevices=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
-RestrictNamespaces=yes
-LockPersonality=yes
-MemoryDenyWriteExecute=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
-SystemCallArchitectures=native
-SystemCallFilter=@system-service
-SystemCallFilter=~@privileged @resources
+LockPersonality=yes
 # Resource caps - tune if you load more symbols.
 LimitNOFILE=4096
 MemoryMax=2G

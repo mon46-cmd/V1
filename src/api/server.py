@@ -121,8 +121,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         return d
 
     # ---- routes -------------------------------------------------------
-    @app.get("/api/health")
-    def health() -> dict:
+    def _health_payload() -> dict:
         return {
             "status": "ok",
             "version": "0.1.0",
@@ -131,6 +130,14 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             "active_run": _active_run_id(),
             "ts": pd.Timestamp.now(tz="UTC").isoformat(),
         }
+
+    @app.get("/api/health")
+    def health() -> dict:
+        return _health_payload()
+
+    @app.get("/health")
+    def health_compat() -> dict:
+        return _health_payload()
 
     @app.get("/api/runs")
     def list_runs() -> dict:

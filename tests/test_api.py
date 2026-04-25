@@ -163,6 +163,15 @@ def test_health(client: TestClient, run_tree) -> None:
     assert body["active_run"] == rid
 
 
+def test_health_compat_alias(client: TestClient, run_tree) -> None:
+    _, rid = run_tree
+    r = client.get("/health")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "ok"
+    assert body["active_run"] == rid
+
+
 def test_list_runs(client: TestClient, run_tree) -> None:
     _, rid = run_tree
     r = client.get("/api/runs")

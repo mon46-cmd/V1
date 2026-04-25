@@ -10,8 +10,6 @@ Type=simple
 User=__USER__
 Group=__GROUP__
 WorkingDirectory=__V5_HOME__
-Environment=API_HOST=127.0.0.1
-Environment=API_PORT=8765
 EnvironmentFile=__V5_HOME__/.env
 ExecStart=__V5_HOME__/.venv/bin/python __V5_HOME__/scripts/run_api.py
 Restart=on-failure

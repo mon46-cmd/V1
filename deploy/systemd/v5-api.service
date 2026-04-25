@@ -10,8 +10,6 @@ Type=simple
 # Reference unit for a default ~/v5 install under systemd --user.
 # For production installs on arbitrary paths, prefer `sudo deploy/install.sh`.
 WorkingDirectory=%h/v5
-Environment=API_HOST=127.0.0.1
-Environment=API_PORT=8765
 EnvironmentFile=%h/v5/.env
 ExecStart=%h/v5/.venv/bin/python %h/v5/scripts/run_api.py
 Restart=on-failure

@@ -133,6 +133,7 @@ blocks.
 cd ~/V1
 grep -q '^API_HOST=' .env && sed -i 's/^API_HOST=.*/API_HOST=0.0.0.0/' .env || echo 'API_HOST=0.0.0.0' >> .env
 grep -q '^API_PORT=' .env && sed -i 's/^API_PORT=.*/API_PORT=8765/' .env || echo 'API_PORT=8765' >> .env
+sudo deploy/install.sh
 sudo systemctl restart v5-api.service
 ```
 
